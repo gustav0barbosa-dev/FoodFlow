@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FoodFlow</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<style>
+:root{--out:#EDEDED;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--out:#18181b}}
+:root[data-theme="dark"]{--out:#18181b}
+html,body{height:100%;margin:0;background:var(--out);font-family:Inter,system-ui,sans-serif;color:#3F3E3E}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
+h1,h2,h3,.pf{font-family:Poppins,Inter,sans-serif}
+.fade{animation:fd .3s ease}@keyframes fd{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.sk{background:linear-gradient(90deg,#eee 25%,#f7f7f7 50%,#eee 75%);background-size:200% 100%;animation:sh 1.2s infinite}@keyframes sh{to{background-position:-200% 0}}
+.no-sb::-webkit-scrollbar{display:none}.no-sb{scrollbar-width:none}
+.card{transition:transform .2s}.card:hover{transform:translateY(-2px)}
+</style></head>
+<body><div id="root"></div>
+<script>
+const h=htm.bind(React.createElement);
+const {useState,useEffect,useContext,createContext}=React;
+const RED='#EA1D2C';
+const brl=n=>'R$ '+n.toFixed(2).replace('.',',');
+const wait=v=>new Promise(r=>setTimeout(()=>r(v),200+Math.random()*400));
+const M={
+Brasileira:[['Feijoada completa','Feijão preto, arroz, couve e farofa',34.9,'🍲'],['Frango com quiabo','Servido com angu e arroz',29.9,'🍗'],['PF do dia','Bife, arroz, feijão e salada',24.9,'🍛'],['Tropeiro','Feijão, linguiça e ovo',31.9,'🥘'],['Pudim','Receita da casa',9.9,'🍮']],
+'Hambúrguer':[['Classic Burger','Blend 160g, queijo e molho',27.9,'🍔'],['Bacon Smash','Duplo, bacon crocante',34.9,'🥓'],['Batata média','Frita na hora',14.9,'🍟'],['Milkshake','Chocolate ou morango',18.9,'🥤'],['Chicken Crispy','Frango empanado',29.9,'🍗']],
+'Japonês':[['Combo 20 peças','Sushi e sashimi variados',69.9,'🍣'],['Hot roll','8 unidades',32.9,'🍙'],['Temaki salmão','Cream cheese e cebolinha',28.9,'🍥'],['Yakisoba','Carne e legumes',39.9,'🍜']],
+Pizza:[['Margherita','Molho, muçarela e manjericão',49.9,'🍕'],['Calabresa','Cebola e azeitonas',52.9,'🍕'],['Quatro Queijos','Gorgonzola, provolone, parmesão',58.9,'🧀'],['Lasanha','À bolonhesa',42.9,'🍝'],['Tiramisù','Sobremesa clássica',19.9,'🍰']],
+'Saudável':[['Bowl de quinoa','Legumes assados e grão-de-bico',34.9,'🥗'],['Wrap vegano','Homus e vegetais',26.9,'🌯'],['Suco verde','Couve, limão e gengibre',12.9,'🥬'],['Salada Caesar','Frango grelhado',31.9,'🥙']],
+Doces:[['Açaí 500ml','Banana, granola e leite ninho',24.9,'🍇'],['Pão francês (10un)','Quentinho',8.9,'🥖'],['Bolo de cenoura','Fatia com cobertura',11.9,'🍰'],['Café com leite','Média',7.9,'☕'],['Croissant','Presunto e queijo',14.9,'🥐']],
+'Árabe':[['Esfiha de carne','Unidade',6.5,'🥟'],['Shawarma de frango','Pão sírio e molho de alho',28.9,'🌯'],['Frango assado','Inteiro com arroz árabe',54.9,'🍗'],['Kibe frito','6 unidades',22.9,'🧆']],
+Mexicana:[['Tacos al pastor','3 unidades',32.9,'🌮'],['Burrito','Carne e feijão',34.9,'🌯'],['Nachos','Queijo e guacamole',27.9,'🧀'],['Quesadilla','Frango e queijo',29.9,'🫓']]};
+const P=[['Marcos T.','12/10/2026',5,'Chegou quentinho e antes do prazo. Recomendo!'],['Júlia R.','03/10/2026',4,'Muito saboroso, só a embalagem poderia ser melhor.'],['Paulo H.','28/09/2026',5,'Melhor da região, porção generosa.'],['Camila F.','21/09/2026',4,'Bom custo-benefício, voltarei a pedir.'],['Renato S.','15/09/2026',3,'Comida boa, mas demorou um pouco.']];
+const raw=[['Sabor da Vila','Brasileira','🍛',30,4.6,210,1.2,4.99,25,35,['Promoção'],1],['Burger House Osasco','Hambúrguer','🍔',20,4.7,312,1.4,5.99,30,40,[],1],['Sushi Yamato','Japonês','🍣',350,4.8,540,2.1,7.99,35,45,[],1],['Cantina Nonna Rosa','Pizza','🍝',10,4.5,188,2.5,0,40,50,['Frete grátis'],0],['Verde Vivo — Saudável','Saudável','🥗',130,4.7,97,0.9,3.99,20,30,['Vegano'],1],['Pizza Prime','Pizza','🍕',25,4.4,402,1.8,6.5,30,45,['Promoção'],0],['Açaí do Bairro','Doces','🍇',280,4.9,620,0.6,0,15,25,['Frete grátis','Promoção'],1],['Tacos El Sol','Mexicana','🌮',45,4.3,76,3.2,8.9,35,50,[],0],['Padaria Pão Quente','Doces','🥐',35,4.6,330,0.8,2.99,15,25,[],0],['Comida Mineira da Dona Cida','Brasileira','🍲',18,4.8,255,2.9,0,35,45,['Frete grátis'],1],['Bendito Frango','Árabe','🍗',40,4.2,141,1.6,4.5,25,35,['Promoção'],0],['Vegano & Cia','Saudável','🌱',110,4.6,88,2.3,5.5,30,40,['Vegano'],0]];
+const R=raw.map((r,i)=>({id:String(i),name:r[0],category:r[1],emoji:r[2],hue:r[3],rating:r[4],reviewCount:r[5],distanceKm:r[6],deliveryFee:r[7],tmin:r[8],tmax:r[9],tags:r[7]===0&&!r[10].includes('Frete grátis')?[...r[10],'Frete grátis']:r[10],isRecommended:!!r[11],
+address:'Av. dos Autonomistas, '+(1400+i*37)+' — Osasco, SP',phone:'(11) 3600-'+(1000+i*73),
+menu:(M[r[1]]||M.Brasileira).map((m,j)=>({id:i+'-'+j,name:m[0],desc:m[1],price:m[2],emoji:m[3]})),
+reviews:P.map((p,j)=>({name:p[0],date:p[1],rating:p[2],text:p[3]}))}));
+const USER={name:'Ana Silva',email:'ana@email.com',location:'Osasco, SP'};
+const CATS=[['Pizza','🍕'],['Hambúrguer','🍔'],['Japonês','🍣'],['Brasileira','🍛'],['Saudável','🥗'],['Doces','🍰'],['Bebidas','🥤'],['Árabe','🥙']];
+const TAG={Vegano:'bg-green-100 text-green-700','Promoção':'bg-red-100 text-red-600','Frete grátis':'bg-blue-100 text-blue-600'};
+const ORDERS=[[3,'05/11/2026',69.9],[1,'29/10/2026',42.8],[6,'20/10/2026',24.9],[9,'11/10/2026',58.7]];
+
+const Ctx=createContext();
+const useApp=()=>useContext(Ctx);
+const go=r=>{location.hash=r};
+
+const Badge=({t})=>h`<span className=${'text-[11px] font-medium px-2 py-0.5 rounded-full '+(TAG[t]||'bg-gray-100')}>${t}</span>`;
+const Img=({r,cls='',big})=>h`<div className=${'flex items-center justify-center shrink-0 '+cls} style=${{background:`hsl(${r.hue} 85% 90%)`,fontSize:big?'64px':'34px'}}>${r.emoji}</div>`;
+const Star=({v})=>h`<span className="text-xs font-semibold"><span style=${{color:'#FFB800'}}>★</span> ${v.toFixed(1).replace('.',',')}</span>`;
+const Sk=({cls})=>h`<div className=${'sk rounded-2xl '+cls}></div>`;
+
+const BigCard=({r})=>h`<div onClick=${()=>go('r-'+r.id)} className="card w-60 shrink-0 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden cursor-pointer">
+ <div className="relative"><${Img} r=${r} cls="h-32 w-full" big=${1}/>${r.isRecommended&&h`<span className="absolute top-2 left-2 text-[11px] font-medium text-white px-2 py-1 rounded-full" style=${{background:'#7C3AED'}}>✨ Para você</span>`}</div>
+ <div className="p-3"><div className="font-semibold text-sm truncate">${r.name}</div><div className="text-xs text-gray-500 mt-0.5">${r.category}</div>
+ <div className="flex items-center gap-2 mt-2 text-xs text-gray-500"><${Star} v=${r.rating}/><span>${r.distanceKm.toFixed(1).replace('.',',')} km</span><span>${r.tmin}–${r.tmax} min</span></div></div></div>`;
+
+const Compact=({r})=>h`<div onClick=${()=>go('r-'+r.id)} className="card flex gap-3 p-3 bg-white rounded-2xl border border-gray-100 shadow-sm cursor-pointer">
+ <${Img} r=${r} cls="w-20 h-20 rounded-2xl"/>
+ <div className="min-w-0 flex-1"><div className="font-semibold text-sm truncate">${r.name}</div>
+ <div className="text-xs text-gray-500 flex items-center gap-2 mt-0.5">${r.category} · <${Star} v=${r.rating}/></div>
+ <div className="text-xs text-gray-500 mt-1">${r.distanceKm.toFixed(1).replace('.',',')} km · ${r.tmin}–${r.tmax} min · <span className=${r.deliveryFee===0?'text-green-600 font-medium':''}>${r.deliveryFee===0?'Grátis':brl(r.deliveryFee)}</span></div>
+ <div className="flex gap-1 mt-1.5 flex-wrap">${r.tags.map(t=>h`<${Badge} key=${t} t=${t}/>`)}</div></div></div>`;
+
+const SearchBar=({onClick,value,onChange,focus})=>h`<div onClick=${onClick} className="flex items-center gap-2 bg-gray-100 rounded-2xl px-4 py-3 text-sm text-gray-500">🔍
+ ${onChange?h`<input autoFocus=${focus} value=${value} onChange=${e=>onChange(e.target.value)} placeholder="Buscar restaurantes ou pratos" className="bg-transparent outline-none flex-1 text-[#3F3E3E]"/>`:h`<span>Buscar restaurantes ou pratos</span>`}</div>`;
+
+function Onboarding({done}){
+ const [m,setM]=useState(false),[l,setL]=useState(false);
+ const use=()=>{setL(true);try{navigator.geolocation&&navigator.geolocation.getCurrentPosition(()=>{},()=>{})}catch(e){}setTimeout(()=>done(),1000)};
+ return h`<div className="h-full flex flex-col items-center justify-center px-8 text-center fade">
+ <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl text-white mb-4" style=${{background:RED}}>🍴</div>
+ <h1 className="text-3xl font-bold" style=${{color:RED}}>FoodFlow</h1>
+ <h2 className="text-xl font-semibold mt-10">Descubra restaurantes perto de você</h2>
+ <p className="text-sm text-gray-500 mt-2">Ative sua localização para ver os melhores restaurantes da sua região.</p>
+ <button onClick=${use} disabled=${l} className="w-full mt-8 py-3.5 rounded-2xl text-white font-semibold disabled:opacity-70" style=${{background:RED}}>${l?'Detectando…':'📍 Usar minha localização'}</button>
+ <button onClick=${()=>setM(!m)} className="mt-4 text-sm font-medium" style=${{color:RED}}>Digitar endereço manualmente</button>
+ ${m&&h`<input placeholder="Rua, número, bairro" className="w-full mt-3 border border-gray-200 rounded-2xl px-4 py-3 text-sm outline-none fade"/>`}</div>`;
+}
+
+function Home({setQ}){
+ const [rs,setRs]=useState(null),[f,setF]=useState('Todos');
+ const {cartCount}=useApp();
+ useEffect(()=>{wait(R).then(setRs)},[]);
+ const FL=['Todos','Vegano','Promoção','Frete grátis','Mais bem avaliados'];
+ const near=rs&&[...rs].sort((a,b)=>a.distanceKm-b.distanceKm).filter(r=>f==='Todos'||(f==='Mais bem avaliados'?r.rating>=4.7:r.tags.includes(f)));
+ return h`<div className="fade pb-4">
+ <div className="sticky top-0 bg-white z-10 px-5 pt-5 pb-3">
+  <div className="flex items-center justify-between"><div><div className="font-bold text-lg pf">Olá, Ana 👋</div><div className="text-xs text-gray-500">📍 Entregar em ${USER.location} ⌄</div></div>
+  <div onClick=${()=>go('sacola')} className="relative text-2xl cursor-pointer">🛍️${cartCount>0&&h`<span className="absolute -top-1 -right-2 text-[10px] text-white rounded-full w-4 h-4 flex items-center justify-center" style=${{background:RED}}>${cartCount}</span>`}</div></div>
+  <div className="mt-3"><${SearchBar} onClick=${()=>go('buscar')}/></div></div>
+ <div className="px-5 mt-2"><h2 className="font-semibold text-lg">Recomendados para você</h2><p className="text-xs text-gray-500">✨ Baseado no seu histórico e horário</p></div>
+ <div className="flex gap-3 overflow-x-auto no-sb px-5 py-3">${rs?rs.filter(r=>r.isRecommended).concat(rs.filter(r=>!r.isRecommended)).slice(0,6).map(r=>h`<${BigCard} key=${r.id} r=${r}/>`):[1,2].map(i=>h`<${Sk} key=${i} cls="w-60 h-52 shrink-0"/>`)}</div>
+ <div className="px-5 mt-2"><h2 className="font-semibold text-lg">Perto de você</h2></div>
+ <div className="flex gap-2 overflow-x-auto no-sb px-5 py-3">${FL.map(x=>h`<button key=${x} onClick=${()=>setF(x)} className=${'shrink-0 px-4 py-1.5 rounded-full text-sm border '+(f===x?'text-white border-transparent':'bg-white border-gray-200')} style=${f===x?{background:RED}:{}}>${x}</button>`)}</div>
+ <div className="px-5 flex flex-col gap-3">${near?(near.length?near.map(r=>h`<${Compact} key=${r.id} r=${r}/>`):h`<p className="text-center text-sm text-gray-500 py-6">Nenhum restaurante neste filtro.</p>`):[1,2,3].map(i=>h`<${Sk} key=${i} cls="h-26 h-24"/>`)}</div>
+ <div className="px-5 mt-6"><h2 className="font-semibold text-lg mb-3">Categorias</h2>
+ <div className="grid grid-cols-4 gap-3">${CATS.map(c=>h`<div key=${c[0]} onClick=${()=>{setQ(c[0]);go('buscar')}} className="flex flex-col items-center gap-1 cursor-pointer"><div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center text-3xl">${c[1]}</div><span className="text-[11px]">${c[0]}</span></div>`)}</div></div></div>`;
+}
+
+function Search({q,setQ}){
+ const res=q.trim()?R.filter(r=>(r.name+' '+r.category).toLowerCase().includes(q.trim().toLowerCase())):[];
+ return h`<div className="fade px-5 pt-5 pb-4"><${SearchBar} focus=${1} value=${q} onChange=${setQ}/>
+ ${!q.trim()?h`<h2 className="font-semibold mt-5 mb-3">Buscas recentes</h2><div className="flex gap-2 flex-wrap">${['pizza','japonês','açaí','burger'].map(x=>h`<button key=${x} onClick=${()=>setQ(x)} className="px-4 py-1.5 rounded-full bg-gray-100 text-sm">🕘 ${x}</button>`)}</div>`
+ :res.length?h`<div className="flex flex-col gap-3 mt-4">${res.map(r=>h`<${Compact} key=${r.id} r=${r}/>`)}</div>`
+ :h`<div className="text-center mt-16"><div className="text-6xl">🍽️</div><p className="font-semibold mt-3">Nenhum restaurante encontrado</p><p className="text-sm text-gray-500">Tente outro nome ou categoria.</p></div>`}</div>`;
+}
+
+function Modal({onClose,children}){return h`<div onClick=${onClose} className="absolute inset-0 z-40 bg-black/40 flex items-end fade"><div onClick=${e=>e.stopPropagation()} className="bg-white w-full rounded-t-3xl p-5 max-h-[80%] overflow-y-auto">${children}</div></div>`}
+
+function Detail({id}){
+ const r=R.find(x=>x.id===id);
+ const {add,total,cartCount}=useApp();
+ const [tab,setTab]=useState('Cardápio'),[map,setMap]=useState(false);
+ if(!r)return h`<div className="p-8 text-center">Restaurante não encontrado.</div>`;
+ const dist=[5,4,3,2,1].map(s=>[s,r.reviews.filter(x=>x.rating===s).length/r.reviews.length*100]);
+ return h`<div className="fade pb-24">
+ <div className="relative"><${Img} r=${r} cls="h-52 w-full" big=${1}/><button onClick=${()=>go('home')} className="absolute top-4 left-4 w-10 h-10 rounded-full bg-white shadow flex items-center justify-center text-lg">‹</button></div>
+ <div className="px-5 -mt-5 relative"><div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4">
+  <h1 className="text-xl font-bold">${r.name}</h1><div className="flex items-center gap-2 mt-1 flex-wrap"><span className="text-sm text-gray-500">${r.category}</span>${r.isRecommended&&h`<span className="text-[11px] font-medium text-white px-2 py-0.5 rounded-full" style=${{background:'#7C3AED'}}>✨ Recomendado para você</span>`}</div>
+  <div className="text-sm mt-3 flex flex-col gap-1.5"><div><${Star} v=${r.rating}/> <span className="text-gray-500 text-xs">(${r.reviewCount} avaliações)</span></div>
+  <div>📍 ${r.address}</div><div>📞 <a href=${'tel:'+r.phone.replace(/\D/g,'')} style=${{color:RED}}>${r.phone}</a></div>
+  <div className="text-xs text-gray-600">🚗 ${brl(r.deliveryFee)} · ⏱️ ${r.tmin}–${r.tmax} min · 📏 ${r.distanceKm.toFixed(1).replace('.',',')} km</div></div>
+  <button onClick=${()=>setMap(true)} className="mt-3 text-xs font-medium px-3 py-1.5 rounded-full border" style=${{color:RED,borderColor:RED}}>Ver no mapa</button></div></div>
+ <div className="flex border-b border-gray-100 mt-4 px-5">${['Cardápio','Avaliações','Sobre'].map(t=>h`<button key=${t} onClick=${()=>setTab(t)} className=${'flex-1 py-3 text-sm font-medium border-b-2 '+(tab===t?'':'border-transparent text-gray-400')} style=${tab===t?{borderColor:RED,color:RED}:{}}>${t}</button>`)}</div>
+ <div className="px-5 py-4 flex flex-col gap-3" key=${tab}>
+ ${tab==='Cardápio'&&r.menu.map(m=>h`<div key=${m.id} className="flex items-center gap-3 fade"><div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center text-3xl shrink-0">${m.emoji}</div><div className="flex-1 min-w-0"><div className="font-medium text-sm">${m.name}</div><div className="text-xs text-gray-500 truncate">${m.desc}</div><div className="text-sm font-semibold mt-0.5">${brl(m.price)}</div></div><button onClick=${()=>add(m,r.name)} className="w-9 h-9 rounded-full text-white text-xl" style=${{background:RED}}>+</button></div>`)}
+ ${tab==='Avaliações'&&h`<div className="fade"><div className="flex gap-4 items-center"><div className="text-5xl font-bold pf">${r.rating.toFixed(1).replace('.',',')}</div><div className="flex-1">${dist.map(d=>h`<div key=${d[0]} className="flex items-center gap-2 text-[11px]"><span>${d[0]}★</span><div className="flex-1 h-1.5 bg-gray-100 rounded-full"><div className="h-full rounded-full" style=${{width:d[1]+'%',background:'#FFB800'}}></div></div></div>`)}</div></div>
+ <div className="flex flex-col gap-3 mt-4">${r.reviews.map((v,i)=>h`<div key=${i} className="p-3 rounded-2xl bg-gray-50"><div className="flex justify-between text-sm"><b>${v.name}</b><span className="text-xs text-gray-400">${v.date}</span></div><div className="text-xs" style=${{color:'#FFB800'}}>${'★'.repeat(v.rating)}</div><p className="text-sm mt-1">${v.text}</p></div>`)}</div></div>`}
+ ${tab==='Sobre'&&h`<div className="fade text-sm flex flex-col gap-3"><div><b>Horários</b><div className="text-gray-500">Seg–Sex: 11h às 23h<br/>Sáb–Dom: 11h às 00h</div></div><div><b>Pagamento</b><div className="text-gray-500">💳 Crédito · 💳 Débito · 📱 Pix · 💵 Dinheiro</div></div><div>📞 <a href=${'tel:'+r.phone.replace(/\D/g,'')} style=${{color:RED}}>${r.phone}</a></div></div>`}</div>
+ <div className="absolute bottom-16 left-0 right-0 px-5 py-3 bg-white/95 z-20"><button onClick=${()=>go('sacola')} className="w-full py-3.5 rounded-2xl text-white font-semibold" style=${{background:RED}}>Ver sacola · ${brl(total)}</button></div>
+ ${map&&h`<${Modal} onClose=${()=>setMap(false)}><h3 className="font-semibold mb-3">${r.name}</h3><div className="h-48 rounded-2xl bg-green-50 border border-green-100 flex items-center justify-center text-5xl">🗺️📍</div><p className="text-xs text-gray-500 mt-2">${r.address}</p><//>`}</div>`;
+}
+
+function Bag(){
+ const {items,total,clear,toast,setQty}=useApp();const [ok,setOk]=useState(false);
+ return h`<div className="fade px-5 pt-5 pb-4"><div className="flex items-center gap-3"><button onClick=${()=>history.back()} className="text-2xl">‹</button><h1 className="font-bold text-xl">Sua sacola</h1></div>
+ ${items.length===0?h`<div className="text-center mt-16"><div className="text-6xl">🛍️</div><p className="font-semibold mt-3">Sacola vazia</p><button onClick=${()=>go('home')} className="mt-3 text-sm" style=${{color:RED}}>Explorar restaurantes</button></div>`:h`<div className="mt-4 flex flex-col gap-3">${items.map(i=>h`<div key=${i.id} className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50"><span className="text-2xl">${i.emoji}</span><div className="flex-1 text-sm"><div className="font-medium">${i.name}</div><div className="text-xs text-gray-500">${i.rest} · ${brl(i.price)}</div></div><button onClick=${()=>setQty(i.id,-1)} className="w-7 h-7 rounded-full bg-white border">−</button><b className="text-sm">${i.qty}</b><button onClick=${()=>setQty(i.id,1)} className="w-7 h-7 rounded-full bg-white border">+</button></div>`)}</div>
+ <button onClick=${()=>setOk(true)} className="w-full mt-6 py-3.5 rounded-2xl text-white font-semibold" style=${{background:RED}}>Finalizar pedido · ${brl(total)}</button>`}
+ ${ok&&h`<${Modal} onClose=${()=>setOk(false)}><div className="text-center py-4"><div className="text-6xl">🎉</div><h3 className="font-bold text-lg mt-2">Confirmar pedido?</h3><p className="text-sm text-gray-500">Total ${brl(total)} (protótipo, sem pagamento real)</p><button onClick=${()=>{clear();setOk(false);toast('Pedido finalizado com sucesso!');go('pedidos')}} className="w-full mt-4 py-3 rounded-2xl text-white font-semibold" style=${{background:RED}}>Confirmar</button></div><//>`}</div>`;
+}
+
+function Orders(){
+ const {toast}=useApp();
+ return h`<div className="fade px-5 pt-5 pb-4"><h1 className="font-bold text-xl mb-4">Pedidos</h1><div className="flex flex-col gap-3">${ORDERS.map((o,i)=>{const r=R[o[0]];return h`<div key=${i} className="p-4 rounded-2xl border border-gray-100 shadow-sm bg-white"><div className="flex gap-3 items-center"><${Img} r=${r} cls="w-14 h-14 rounded-2xl"/><div className="flex-1"><div className="font-semibold text-sm">${r.name}</div><div className="text-xs text-gray-500">${o[1]} · ${brl(o[2])}</div></div><span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700">Entregue</span></div><button onClick=${()=>toast('Pedido adicionado à sacola')} className="w-full mt-3 py-2 rounded-xl text-sm font-medium border" style=${{color:RED,borderColor:RED}}>Pedir novamente</button></div>`})}</div></div>`;
+}
+
+const Toggle=({label})=>{const [on,setOn]=useState(false);return h`<div className="flex items-center justify-between py-2.5 text-sm">${label}<button onClick=${()=>setOn(!on)} className="w-11 h-6 rounded-full relative transition-colors" style=${{background:on?RED:'#D4D4D4'}}><span className="absolute top-0.5 w-5 h-5 bg-white rounded-full transition-all" style=${{left:on?'22px':'2px'}}></span></button></div>`};
+function Profile(){
+ const [price,setPrice]=useState(2),[fav,setFav]=useState(['Pizza','Japonês']);
+ return h`<div className="fade px-5 pt-5 pb-4"><div className="flex items-center gap-4"><div className="w-16 h-16 rounded-full text-white text-2xl font-bold flex items-center justify-center" style=${{background:RED}}>A</div><div><div className="font-bold text-lg">${USER.name}</div><div className="text-sm text-gray-500">${USER.email}</div></div></div>
+ <h2 className="font-semibold mt-6">Preferências alimentares</h2><div className="divide-y divide-gray-100">${['Vegano','Vegetariano','Sem glúten','Sem lactose'].map(x=>h`<${Toggle} key=${x} label=${x}/>`)}</div>
+ <h2 className="font-semibold mt-6">✨ Suas preferências de recomendação</h2><p className="text-xs text-gray-500 mt-1">Essas preferências ajudam a personalizar suas recomendações.</p>
+ <div className="mt-3 text-sm">Faixa de preço: <b>${'$'.repeat(price)}</b></div><input type="range" min="1" max="4" value=${price} onChange=${e=>setPrice(+e.target.value)} className="w-full" style=${{accentColor:RED}}/>
+ <div className="text-sm mt-3 mb-2">Culinárias favoritas</div><div className="flex flex-wrap gap-2">${CATS.map(c=>{const on=fav.includes(c[0]);return h`<button key=${c[0]} onClick=${()=>setFav(on?fav.filter(x=>x!==c[0]):[...fav,c[0]])} className=${'px-3 py-1.5 rounded-full text-sm border '+(on?'text-white border-transparent':'border-gray-200')} style=${on?{background:RED}:{}}>${c[1]} ${c[0]}</button>`})}</div>
+ <h2 className="font-semibold mt-6">Configurações</h2><div className="divide-y divide-gray-100">${['🔔 Notificações','📍 Endereços','💳 Pagamento','🚪 Sair'].map(x=>h`<div key=${x} className="py-3 text-sm flex justify-between">${x}<span className="text-gray-400">›</span></div>`)}</div></div>`;
+}
+
+function Nav({route}){
+ const T=[['home','🏠','Início'],['buscar','🔍','Buscar'],['pedidos','🧾','Pedidos'],['perfil','👤','Perfil']];
+ const cur=route.startsWith('r-')||route==='sacola'?'':route;
+ return h`<nav className="absolute bottom-0 inset-x-0 h-16 bg-white border-t border-gray-100 flex z-30" style=${{paddingBottom:'env(safe-area-inset-bottom,0px)'}}>${T.map(t=>h`<button key=${t[0]} onClick=${()=>go(t[0])} className="flex-1 flex flex-col items-center justify-center text-[11px] font-medium" style=${{color:cur===t[0]?RED:'#9CA3AF'}}><span className=${'text-xl '+(cur===t[0]?'':'grayscale opacity-60')}>${t[1]}</span>${t[2]}</button>`)}</nav>`;
+}
+
+function App(){
+ const [ready,setReady]=useState(false),[route,setRoute]=useState(location.hash.slice(1)||'home'),[q,setQ]=useState(''),[items,setItems]=useState([]),[msg,setMsg]=useState(null);
+ useEffect(()=>{const f=()=>setRoute(location.hash.slice(1)||'home');addEventListener('hashchange',f);return()=>removeEventListener('hashchange',f)},[]);
+ const toast=m=>{setMsg(m);setTimeout(()=>setMsg(null),2000)};
+ const add=(m,rest)=>{setItems(p=>p.find(i=>i.id===m.id)?p.map(i=>i.id===m.id?{...i,qty:i.qty+1}:i):[...p,{...m,rest,qty:1}]);toast('Adicionado ao carrinho')};
+ const setQty=(id,d)=>setItems(p=>p.map(i=>i.id===id?{...i,qty:i.qty+d}:i).filter(i=>i.qty>0));
+ const total=items.reduce((s,i)=>s+i.price*i.qty,0),cartCount=items.reduce((s,i)=>s+i.qty,0);
+ const ctx={add,setQty,items,total,cartCount,toast,clear:()=>setItems([])};
+ let page;
+ if(route.startsWith('r-'))page=h`<${Detail} id=${route.slice(2)}/>`;
+ else page={home:h`<${Home} setQ=${setQ}/>`,buscar:h`<${Search} q=${q} setQ=${setQ}/>`,pedidos:h`<${Orders}/>`,perfil:h`<${Profile}/>`,sacola:h`<${Bag}/>`}[route]||h`<${Home} setQ=${setQ}/>`;
+ return h`<${Ctx.Provider} value=${ctx}><div className="min-h-full flex items-center justify-center md:p-6">
+ <div className="relative w-full max-w-[430px] h-[100dvh] md:h-[844px] md:max-h-[92vh] bg-white md:rounded-[40px] md:shadow-2xl md:border-8 md:border-white overflow-hidden">
+ ${!ready?h`<${Onboarding} done=${()=>{setReady(true);toast('Localização detectada: Osasco, SP');go('home')}}/>`
+ :h`<div className="h-full overflow-y-auto no-sb pb-16" key=${route}>${page}</div><${Nav} route=${route}/>`}
+ ${msg&&h`<div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#3F3E3E] text-white text-sm px-4 py-2 rounded-full shadow-lg fade whitespace-nowrap">${msg}</div>`}
+ </div></div><//>`;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h`<${App}/>`);
+</script></body></html>
