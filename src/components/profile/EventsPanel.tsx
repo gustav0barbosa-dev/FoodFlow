@@ -1,14 +1,13 @@
-import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useEventsStore } from '@/store/eventsStore'
 import type { EventPayload, EventType } from '@/store/eventsStore'
+import { useEventFiltersStore } from '@/store/eventFiltersStore'
 import {
   EVENT_LABELS,
   EVENT_PERIODS,
   EVENT_TYPES,
   countEventsByType,
   filterEvents,
-  type EventPeriod,
 } from '@/lib/events'
 import { cn } from '@/lib/utils'
 
@@ -28,8 +27,11 @@ function formatPayload(payload: EventPayload) {
 export function EventsPanel() {
   const events = useEventsStore((s) => s.events)
   const clearEvents = useEventsStore((s) => s.clearEvents)
-  const [type, setType] = useState<EventType | 'all'>('all')
-  const [period, setPeriod] = useState<EventPeriod>('all')
+  const type = useEventFiltersStore((s) => s.type)
+  const period = useEventFiltersStore((s) => s.period)
+  const setType = useEventFiltersStore((s) => s.setType)
+  const setPeriod = useEventFiltersStore((s) => s.setPeriod)
+  const resetFilters = useEventFiltersStore((s) => s.resetFilters)
 
   const filtered = filterEvents(events, { type, period })
   const summary = countEventsByType(filterEvents(events, { type: 'all', period }))
@@ -131,10 +133,7 @@ export function EventsPanel() {
           {events.length > 0 && hasFilters && (
             <button
               type="button"
-              onClick={() => {
-                setType('all')
-                setPeriod('all')
-              }}
+              onClick={resetFilters}
               className="mt-2 text-xs font-medium text-primary px-2 py-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               Limpar filtros
