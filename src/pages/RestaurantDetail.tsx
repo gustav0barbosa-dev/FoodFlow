@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Star, MapPin, Phone, Bike, Clock } from 'lucide-react'
+import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink } from 'lucide-react'
 import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
@@ -62,8 +62,21 @@ export function RestaurantDetail() {
             <Star size={14} className="text-star fill-star" />
             {restaurant.rating} ({restaurant.reviewCount} avaliações)
           </div>
-          <div className="flex items-center gap-2">
-            <MapPin size={14} /> {restaurant.address}
+          <div className="flex items-start gap-2">
+            <MapPin size={14} className="mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <span>{restaurant.address}</span>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="mt-1 flex items-center gap-1 text-primary text-xs font-medium underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label={`Abrir ${restaurant.name} no mapa`}
+              >
+                <ExternalLink size={12} />
+                Abrir no mapa
+              </a>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Phone size={14} />
