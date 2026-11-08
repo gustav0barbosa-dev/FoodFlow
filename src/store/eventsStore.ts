@@ -6,6 +6,7 @@ export type EventType =
   | 'restaurant_opened'
   | 'add_to_cart'
   | 'order_completed'
+  | 'preferences_updated'
 
 export type EventPayload = Record<string, string | number | string[]>
 

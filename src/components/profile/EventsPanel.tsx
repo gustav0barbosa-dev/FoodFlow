@@ -7,6 +7,7 @@ const labels: Record<EventType, string> = {
   restaurant_opened: 'Restaurante aberto',
   add_to_cart: 'Item adicionado',
   order_completed: 'Pedido concluído',
+  preferences_updated: 'Preferências atualizadas',
 }
 
 const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
