@@ -22,10 +22,10 @@ describe('Home carregar mais', () => {
     const cards = document.querySelectorAll('a[href^="/restaurante/"]')
     expect(cards.length).toBeLessThanOrEqual(3)
 
-    const carregarMais = await screen.findByRole('button', {
+    const carregarMais = await screen.findAllByRole('button', {
       name: /Carregar mais/,
     })
-    fireEvent.click(carregarMais)
+    fireEvent.click(carregarMais[0])
 
     const cardsAfter = document.querySelectorAll('a[href^="/restaurante/"]')
     expect(cardsAfter.length).toBeGreaterThan(cards.length)

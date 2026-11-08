@@ -33,6 +33,7 @@ export function Home() {
   const resetFilters = useHomeFiltersStore((s) => s.resetFilters)
   const [query, setQuery] = useState('')
   const [loadedCount, setLoadedCount] = useState(3)
+  const [recommendedLoadedCount, setRecommendedLoadedCount] = useState(3)
   const nearbyRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -109,6 +110,7 @@ export function Home() {
               ))
             : filtered
                 .filter((r) => r.isRecommended)
+                .slice(0, recommendedLoadedCount)
                 .map((r) => (
                   <RestaurantCard
                     key={r.id}
@@ -118,6 +120,24 @@ export function Home() {
                   />
                 ))}
         </div>
+        {!loading &&
+          filtered.filter((r) => r.isRecommended).length > recommendedLoadedCount && (
+          <button
+            type="button"
+            onClick={() =>
+              setRecommendedLoadedCount((current) => current + 3)
+            }
+            className="mt-3 w-full py-2.5 rounded-xl border border-gray-200 bg-white text-sm font-medium text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            Carregar mais ·{' '}
+            {filtered.filter((r) => r.isRecommended).length -
+              recommendedLoadedCount}
+            restante{filtered.filter((r) => r.isRecommended).length -
+              recommendedLoadedCount !== 1
+              ? 's'
+              : ''}
+          </button>
+        )}
       </section>
 
       {/* Combina com você */}
