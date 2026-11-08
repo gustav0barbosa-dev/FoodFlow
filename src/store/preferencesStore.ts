@@ -1,14 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { DietaryPreference } from '@/types'
+import { DIETARY_PREFERENCES } from '@/types'
 
-export const DIETARY_PREFERENCES = [
-  'Vegano',
-  'Vegetariano',
-  'Sem glúten',
-  'Sem lactose',
-] as const
-
-export type DietaryPreference = (typeof DIETARY_PREFERENCES)[number]
+export { DIETARY_PREFERENCES }
+export type { DietaryPreference }
 
 interface PreferencesState {
   preferences: DietaryPreference[]

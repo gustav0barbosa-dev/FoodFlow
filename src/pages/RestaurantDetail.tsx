@@ -50,6 +50,18 @@ export function RestaurantDetail() {
       <div className="p-4">
         <h1 className="font-display font-bold text-xl text-ink">{restaurant.name}</h1>
         <p className="text-sm text-ink-soft">{restaurant.category}</p>
+        {restaurant.dietaryTags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {restaurant.dietaryTags.map((tag) => (
+              <span
+                key={tag}
+                className="text-[11px] font-medium px-2 py-1 rounded-full bg-green-50 text-green-700"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
         {restaurant.isRecommended && (
           <span className="inline-block mt-2 bg-purple-100 text-purple-700 text-xs font-semibold px-2 py-1 rounded-full">
             ✨ Recomendado para você

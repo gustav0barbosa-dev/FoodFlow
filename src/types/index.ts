@@ -14,6 +14,15 @@ export interface Review {
   comment: string
 }
 
+export const DIETARY_PREFERENCES = [
+  'Vegano',
+  'Vegetariano',
+  'Sem glúten',
+  'Sem lactose',
+] as const
+
+export type DietaryPreference = (typeof DIETARY_PREFERENCES)[number]
+
 export interface Restaurant {
   id: string
   name: string
@@ -28,6 +37,7 @@ export interface Restaurant {
   address: string
   phone: string
   tags: string[]
+  dietaryTags: DietaryPreference[]
   isRecommended: boolean
   menu: MenuItem[]
   reviews: Review[]

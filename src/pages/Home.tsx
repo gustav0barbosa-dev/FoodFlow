@@ -8,6 +8,7 @@ import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompact
 import { CategoryChip } from '@/components/restaurant/CategoryChip'
 import { FilterChips } from '@/components/home/FilterChips'
 import { SearchBar } from '@/components/home/SearchBar'
+import { PreferenceMatches } from '@/components/home/PreferenceMatches'
 import { SkeletonCard } from '@/components/common/SkeletonCard'
 import { filterRestaurants } from '@/lib/search'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
@@ -95,6 +96,9 @@ export function Home() {
                 ))}
         </div>
       </section>
+
+      {/* Combina com você */}
+      <PreferenceMatches restaurants={filtered} loading={loading} />
 
       {/* Perto de você */}
       <section ref={nearbyRef} className="px-4 mt-4 scroll-mt-28">

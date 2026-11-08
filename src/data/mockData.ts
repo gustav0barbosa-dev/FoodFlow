@@ -14,6 +14,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 35,
     address: 'Av. dos Autonomistas, 1400 — Osasco, SP',
     phone: '+5511987654321',
+    dietaryTags: ['Sem lactose'],
     tags: ['Promoções', 'Mais bem avaliados'],
     isRecommended: true,
     menu: [
@@ -44,6 +45,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 30,
     address: 'R. Antônio Agú, 500 — Osasco, SP',
     phone: '+5511987654322',
+    dietaryTags: ['Vegano', 'Vegetariano', 'Sem glúten', 'Sem lactose'],
     tags: ['Vegano', 'Frete grátis'],
     isRecommended: true,
     menu: [
@@ -75,6 +77,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 50,
     address: 'Av. Santo Antônio, 1200 — Osasco, SP',
     phone: '+5511987654323',
+    dietaryTags: ['Vegetariano'],
     tags: ['Promoções'],
     isRecommended: true,
     menu: [
@@ -105,6 +108,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 40,
     address: 'R. Graciliano Ramos, 85 — Osasco, SP',
     phone: '+5511987654324',
+    dietaryTags: [],
     tags: ['Promoções'],
     isRecommended: true,
     menu: [
@@ -136,6 +140,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 55,
     address: 'Av. Presidente Médici, 2100 — Osasco, SP',
     phone: '+5511987654325',
+    dietaryTags: [],
     tags: ['Mais bem avaliados'],
     isRecommended: false,
     menu: [
@@ -167,6 +172,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 25,
     address: 'R. João Pessoa, 340 — Osasco, SP',
     phone: '+5511987654326',
+    dietaryTags: ['Vegetariano', 'Sem glúten'],
     tags: ['Frete grátis', 'Mais bem avaliados'],
     isRecommended: true,
     menu: [
@@ -196,6 +202,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 25,
     address: 'Av. Franz Voegeli, 700 — Osasco, SP',
     phone: '+5511987654327',
+    dietaryTags: ['Vegetariano'],
     tags: ['Promoções'],
     isRecommended: false,
     menu: [
@@ -226,6 +233,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 45,
     address: 'R. Minas Gerais, 150 — Osasco, SP',
     phone: '+5511987654328',
+    dietaryTags: ['Vegano', 'Vegetariano', 'Sem lactose'],
     tags: ['Vegano'],
     isRecommended: false,
     menu: [
@@ -257,6 +265,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 25,
     address: 'R. Sena Madureira, 210 — Osasco, SP',
     phone: '+5511987654329',
+    dietaryTags: [],
     tags: ['Frete grátis'],
     isRecommended: false,
     menu: [
@@ -286,6 +295,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 45,
     address: 'Av. Visconde de Souza Alves, 90 — Osasco, SP',
     phone: '+5511987654330',
+    dietaryTags: ['Sem lactose'],
     tags: ['Mais bem avaliados'],
     isRecommended: true,
     menu: [
@@ -316,6 +326,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 55,
     address: 'R. Padre Anchieta, 45 — Osasco, SP',
     phone: '+5511987654331',
+    dietaryTags: ['Vegetariano'],
     tags: ['Promoções'],
     isRecommended: false,
     menu: [
@@ -346,6 +357,7 @@ export const restaurants: Restaurant[] = [
     deliveryTimeMax: 35,
     address: 'Av. Hilário Pereira de Souza, 300 — Osasco, SP',
     phone: '+5511987654332',
+    dietaryTags: ['Vegano', 'Vegetariano', 'Sem lactose'],
     tags: ['Vegano'],
     isRecommended: false,
     menu: [
