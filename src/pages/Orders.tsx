@@ -1,65 +1,14 @@
 import { ShoppingBag } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
-import { toast } from 'sonner'
-import { restaurants } from '@/data/mockData'
-import { useOrdersStore, type Order, type OrderStatus } from '@/store/ordersStore'
-import { useCartStore } from '@/store/cartStore'
-import { cn, formatBRL } from '@/lib/utils'
-
-const statusStyles: Record<OrderStatus, string> = {
-  'Em preparo': 'bg-amber-100 text-amber-700',
-  'Saiu para entrega': 'bg-blue-100 text-blue-700',
-  Entregue: 'bg-green-100 text-green-700',
-}
-
-const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-})
-
-function restaurantLabel(order: Order) {
-  const [first, ...rest] = order.restaurantNames
-  if (!first) return 'Pedido'
-  if (rest.length === 0) return first
-  return `${first} + ${rest.length} ${rest.length === 1 ? 'restaurante' : 'restaurantes'}`
-}
+import { Link } from 'react-router-dom'
+import { useOrdersStore } from '@/store/ordersStore'
+import { useOrderReorder } from '@/hooks/useOrderReorder'
+import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
+import { formatOrderDate, orderRestaurantLabel } from '@/lib/orders'
+import { formatBRL } from '@/lib/utils'
 
 export function Orders() {
   const orders = useOrdersStore((s) => s.orders)
-  const addItem = useCartStore((s) => s.addItem)
-  const navigate = useNavigate()
-
-  const handleReorder = (order: Order) => {
-    let addedCount = 0
-
-    for (const line of order.items) {
-      const restaurant = restaurants.find((r) =>
-        r.menu.some((menuItem) => menuItem.id === line.id)
-      )
-      const menuItem = restaurant?.menu.find((item) => item.id === line.id)
-      if (!restaurant || !menuItem) continue
-
-      for (let i = 0; i < line.quantity; i += 1) {
-        addItem(restaurant.id, restaurant.name, menuItem)
-      }
-      addedCount += line.quantity
-    }
-
-    if (addedCount === 0) {
-      toast.error('Não foi possível repetir este pedido')
-      return
-    }
-
-    toast.success(
-      addedCount === 1
-        ? '1 item adicionado à sacola'
-        : `${addedCount} itens adicionados à sacola`
-    )
-    navigate('/sacola')
-  }
+  const reorder = useOrderReorder()
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
@@ -94,20 +43,13 @@ export function Orders() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <h2 className="font-medium text-ink truncate">
-                    {restaurantLabel(order)}
+                    {orderRestaurantLabel(order)}
                   </h2>
                   <p className="text-xs text-ink-soft mt-0.5">
-                    {dateFormatter.format(new Date(order.createdAt))}
+                    {formatOrderDate(order.createdAt)}
                   </p>
                 </div>
-                <span
-                  className={cn(
-                    'text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap',
-                    statusStyles[order.status]
-                  )}
-                >
-                  {order.status}
-                </span>
+                <OrderStatusBadge status={order.status} />
               </div>
 
               <p className="mt-2 text-xs text-ink-soft line-clamp-2">
@@ -123,14 +65,23 @@ export function Orders() {
                     {formatBRL(order.total)}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleReorder(order)}
-                  aria-label={`Pedir novamente: ${restaurantLabel(order)}`}
-                  className="text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  Pedir novamente
-                </button>
+                <div className="flex items-center gap-2">
+                  <Link
+                    to={`/pedidos/${order.id}`}
+                    aria-label={`Ver detalhes do pedido de ${orderRestaurantLabel(order)}`}
+                    className="text-sm font-medium text-primary px-3 py-1.5 rounded-full hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Detalhes
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => reorder(order)}
+                    aria-label={`Pedir novamente: ${orderRestaurantLabel(order)}`}
+                    className="text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Pedir novamente
+                  </button>
+                </div>
               </div>
             </article>
           ))}
