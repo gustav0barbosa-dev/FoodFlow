@@ -9,7 +9,7 @@ import { CategoryChip } from '@/components/restaurant/CategoryChip'
 import { FilterChips } from '@/components/home/FilterChips'
 import { SearchBar } from '@/components/home/SearchBar'
 import { PreferenceMatches } from '@/components/home/PreferenceMatches'
-import { SkeletonCard } from '@/components/common/SkeletonCard'
+import { Skeleton } from '@/components/common/Skeleton'
 import { filterRestaurants } from '@/lib/search'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
@@ -88,7 +88,9 @@ export function Home() {
         <p className="text-xs text-ink-soft mb-3">Baseado no seu histórico e horário</p>
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
           {loading
-            ? Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+            ? Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} variant="card" />
+              ))
             : filtered
                 .filter((r) => r.isRecommended)
                 .map((r) => (
@@ -109,7 +111,9 @@ export function Home() {
         <FilterChips active={filter} onChange={setFilter} />
         <div className="space-y-3 mt-2">
           {loading
-            ? Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+            ? Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} variant="card" />
+              ))
             : nearby.map((r) => (
                 <RestaurantCompactCard key={r.id} restaurant={r} source="home_nearby" />
               ))}

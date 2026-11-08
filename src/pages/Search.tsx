@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { SearchX } from 'lucide-react'
 import { SearchBar } from '@/components/home/SearchBar'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
-import { SkeletonRow } from '@/components/common/SkeletonRow'
+import { Skeleton } from '@/components/common/Skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { useRestaurantSearch } from '@/hooks/useRestaurantSearch'
@@ -50,7 +50,9 @@ export function Search() {
 
         <div className="space-y-3" aria-busy={loading}>
           {loading &&
-            Array.from({ length: 3 }).map((_, index) => <SkeletonRow key={index} />)}
+            Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} variant="row" />
+            ))}
 
           {!loading && error && (
             <ErrorState description={error} onAction={retry} />

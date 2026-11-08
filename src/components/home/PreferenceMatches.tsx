@@ -4,7 +4,7 @@ import type { Restaurant } from '@/types'
 import { usePreferencesStore } from '@/store/preferencesStore'
 import { countMatchingPreferences, matchesAnyPreference } from '@/lib/dietary'
 import { RestaurantCard } from '@/components/restaurant/RestaurantCard'
-import { SkeletonCard } from '@/components/common/SkeletonCard'
+import { Skeleton } from '@/components/common/Skeleton'
 
 export function PreferenceMatches({
   restaurants,
@@ -44,7 +44,7 @@ export function PreferenceMatches({
       {loading ? (
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
           {Array.from({ length: 3 }).map((_, index) => (
-            <SkeletonCard key={index} />
+            <Skeleton key={index} variant="card" />
           ))}
         </div>
       ) : matches.length === 0 ? (
