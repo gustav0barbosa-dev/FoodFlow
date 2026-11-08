@@ -139,6 +139,7 @@ export function Cart() {
                   <button
                     type="button"
                     onClick={() => navigate(`/restaurante/${group.restaurantId}`)}
+                    aria-label={`Abrir ${group.restaurantName}`}
                     className="text-sm font-semibold text-ink hover:text-primary rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
                     {group.restaurantName}

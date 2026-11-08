@@ -41,8 +41,9 @@ export function MenuItem({
       <div className="relative">
         <img src={item.image} alt={item.name} className="w-20 h-20 rounded-xl object-cover" />
         <button
+          type="button"
           onClick={handleAdd}
-          className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full w-7 h-7 flex items-center justify-center shadow"
+          className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full w-7 h-7 flex items-center justify-center shadow hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           aria-label={`Adicionar ${item.name}`}
         >
           <Plus size={16} />

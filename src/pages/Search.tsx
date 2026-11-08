@@ -35,6 +35,7 @@ export function Search() {
                   key={s}
                   type="button"
                   onClick={() => setQuery(s)}
+                  aria-label={`Buscar por ${s}`}
                   className="px-3 py-1.5 bg-white border border-gray-200 rounded-full text-sm text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   {s}

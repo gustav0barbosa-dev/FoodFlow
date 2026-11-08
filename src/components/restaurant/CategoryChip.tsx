@@ -26,7 +26,7 @@ export function CategoryChip({
       >
         {emoji}
       </span>
-      <span className={cn('text-xs', active ? 'text-primary font-semibold' : 'text-ink')}>
+      <span className={cn('text-xs', active ? 'text-primary-dark font-semibold' : 'text-ink')}>
         {name}
       </span>
     </button>

@@ -10,16 +10,22 @@ export function FilterChips({
   onChange: (value: string) => void
 }) {
   return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
+    <div
+      role="group"
+      aria-label="Filtrar restaurantes"
+      className="flex gap-2 overflow-x-auto no-scrollbar py-2"
+    >
       {FILTERS.map((f) => (
         <button
           key={f}
+          type="button"
           onClick={() => onChange(f)}
+          aria-pressed={active === f}
           className={cn(
-            'whitespace-nowrap rounded-full border px-3 py-1.5 text-sm',
+            'whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
             active === f
               ? 'bg-primary text-white border-primary'
-              : 'bg-white text-ink border-gray-200'
+              : 'bg-white text-ink border-gray-200 hover:bg-surface-muted'
           )}
         >
           {f}

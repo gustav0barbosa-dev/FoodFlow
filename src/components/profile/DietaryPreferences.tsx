@@ -70,7 +70,7 @@ export function DietaryPreferences() {
               className={cn(
                 'px-3 py-1.5 rounded-full text-sm border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                 isSelected
-                  ? 'bg-primary/10 border-primary text-primary font-medium'
+                  ? 'bg-primary/10 border-primary text-primary-dark font-medium'
                   : 'bg-surface-muted border-transparent text-ink hover:bg-gray-100'
               )}
             >

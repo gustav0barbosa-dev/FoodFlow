@@ -18,7 +18,7 @@ export function BottomNav() {
           to={to}
           className={({ isActive }) =>
             cn(
-              'flex flex-col items-center gap-1 text-xs font-medium',
+              'flex flex-col items-center gap-1 text-xs font-medium rounded-lg px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
               isActive ? 'text-primary' : 'text-ink-soft'
             )
           }

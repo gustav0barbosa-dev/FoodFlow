@@ -25,7 +25,7 @@ export function RestaurantCompactCard({
     <Link
       to={`/restaurante/${restaurant.id}`}
       onClick={handleClick}
-      className="flex gap-3 bg-white rounded-2xl p-3 border border-gray-100 shadow-sm"
+      className="flex gap-3 bg-white rounded-2xl p-3 border border-gray-100 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <img
         src={restaurant.image}

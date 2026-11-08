@@ -24,44 +24,46 @@ export default function App() {
     <BrowserRouter>
       <MobileFrame>
         <Toaster position="top-center" richColors />
-        <Routes>
-          <Route path="/" element={<Onboarding />} />
-          <Route
-            path="/home"
-            element={
-              <WithNav>
-                <Home />
-              </WithNav>
-            }
-          />
-          <Route
-            path="/buscar"
-            element={
-              <WithNav>
-                <Search />
-              </WithNav>
-            }
-          />
-          <Route path="/restaurante/:id" element={<RestaurantDetail />} />
-          <Route path="/sacola" element={<Cart />} />
-          <Route
-            path="/pedidos"
-            element={
-              <WithNav>
-                <Orders />
-              </WithNav>
-            }
-          />
-          <Route
-            path="/perfil"
-            element={
-              <WithNav>
-                <Profile />
-              </WithNav>
-            }
-          />
-          <Route path="*" element={<Navigate to="/home" replace />} />
-        </Routes>
+        <main className="h-full">
+          <Routes>
+            <Route path="/" element={<Onboarding />} />
+            <Route
+              path="/home"
+              element={
+                <WithNav>
+                  <Home />
+                </WithNav>
+              }
+            />
+            <Route
+              path="/buscar"
+              element={
+                <WithNav>
+                  <Search />
+                </WithNav>
+              }
+            />
+            <Route path="/restaurante/:id" element={<RestaurantDetail />} />
+            <Route path="/sacola" element={<Cart />} />
+            <Route
+              path="/pedidos"
+              element={
+                <WithNav>
+                  <Orders />
+                </WithNav>
+              }
+            />
+            <Route
+              path="/perfil"
+              element={
+                <WithNav>
+                  <Profile />
+                </WithNav>
+              }
+            />
+            <Route path="*" element={<Navigate to="/home" replace />} />
+          </Routes>
+        </main>
       </MobileFrame>
     </BrowserRouter>
   )

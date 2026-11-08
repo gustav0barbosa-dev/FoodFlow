@@ -126,6 +126,7 @@ export function Orders() {
                 <button
                   type="button"
                   onClick={() => handleReorder(order)}
+                  aria-label={`Pedir novamente: ${restaurantLabel(order)}`}
                   className="text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   Pedir novamente

@@ -39,8 +39,9 @@ export function RestaurantDetail() {
       <div className="relative">
         <img src={restaurant.image} alt={restaurant.name} className="w-full h-52 object-cover" />
         <button
+          type="button"
           onClick={() => navigate(-1)}
-          className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white flex items-center justify-center shadow"
+          className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white flex items-center justify-center shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           aria-label="Voltar"
         >
           <ChevronLeft size={20} />
@@ -92,7 +93,10 @@ export function RestaurantDetail() {
           </div>
           <div className="flex items-center gap-2">
             <Phone size={14} />
-            <a href={`tel:${restaurant.phone}`} className="text-primary underline">
+            <a
+              href={`tel:${restaurant.phone}`}
+              className="text-primary underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
               {restaurant.phone}
             </a>
           </div>
@@ -109,12 +113,18 @@ export function RestaurantDetail() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mt-4 border-b border-gray-100">
+        <div
+          role="group"
+          aria-label="Seções do restaurante"
+          className="flex gap-1 mt-4 border-b border-gray-100"
+        >
           {(['menu', 'reviews', 'about'] as const).map((t) => (
             <button
               key={t}
+              type="button"
+              aria-pressed={tab === t}
               onClick={() => setTab(t)}
-              className={`px-3 py-2 text-sm font-medium ${
+              className={`px-3 py-2 text-sm font-medium rounded-t focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                 tab === t ? 'text-primary border-b-2 border-primary' : 'text-ink-soft'
               }`}
             >
@@ -147,6 +157,7 @@ export function RestaurantDetail() {
       {/* Rodapé */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] p-3 bg-white border-t border-gray-100">
         <button
+          type="button"
           onClick={() => navigate('/sacola')}
           disabled={count === 0}
           className="w-full bg-primary text-white rounded-2xl py-3 font-semibold disabled:opacity-50 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"

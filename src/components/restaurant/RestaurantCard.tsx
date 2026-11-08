@@ -29,7 +29,7 @@ export function RestaurantCard({
       to={`/restaurante/${restaurant.id}`}
       onClick={handleClick}
       className={cn(
-        'block bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100',
+        'block bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         isLarge ? 'w-60 shrink-0' : 'w-full'
       )}
     >

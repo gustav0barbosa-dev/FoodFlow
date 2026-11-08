@@ -27,12 +27,16 @@ export function Onboarding() {
       </p>
 
       <button
+        type="button"
         onClick={handleLocation}
-        className="w-full bg-primary text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2"
+        className="w-full bg-primary text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       >
         <MapPin size={18} /> Usar minha localização
       </button>
-      <button className="mt-3 text-sm text-ink-soft underline">
+      <button
+        type="button"
+        className="mt-3 text-sm text-ink-soft underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
         Digitar endereço manualmente
       </button>
     </div>

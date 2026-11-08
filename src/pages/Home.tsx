@@ -131,6 +131,7 @@ export function Home() {
             <button
               type="button"
               onClick={() => setCategory(null)}
+              aria-label="Limpar filtro de categoria"
               className="text-xs font-medium text-primary rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               Limpar
