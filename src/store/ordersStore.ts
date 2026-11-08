@@ -67,7 +67,7 @@ export const useOrdersStore = create<OrdersState>()(
 
       addOrder: (input) => {
         const order: Order = {
-          id: `o${Date.now()}`,
+          id: `o${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           restaurantNames: input.restaurantNames,
           items: input.items,
           itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
