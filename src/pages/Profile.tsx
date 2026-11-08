@@ -4,6 +4,7 @@ import { currentUser } from '@/data/mockData'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { EventsPanel } from '@/components/profile/EventsPanel'
 import { DietaryPreferences } from '@/components/profile/DietaryPreferences'
+import { ProfileStats } from '@/components/profile/ProfileStats'
 import { SettingsList } from '@/components/profile/SettingsList'
 
 export function Profile() {
@@ -22,6 +23,7 @@ export function Profile() {
       </header>
 
       <div className="p-4 space-y-3">
+        <ProfileStats />
         <DietaryPreferences />
 
         <Link
