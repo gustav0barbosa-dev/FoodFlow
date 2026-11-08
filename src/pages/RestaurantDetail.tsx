@@ -108,8 +108,9 @@ export function RestaurantDetail() {
       {/* Rodapé */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] p-3 bg-white border-t border-gray-100">
         <button
+          onClick={() => navigate('/sacola')}
           disabled={count === 0}
-          className="w-full bg-primary text-white rounded-2xl py-3 font-semibold disabled:opacity-50"
+          className="w-full bg-primary text-white rounded-2xl py-3 font-semibold disabled:opacity-50 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           Ver sacola · {formatBRL(total)}
         </button>

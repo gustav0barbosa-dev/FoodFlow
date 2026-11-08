@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ShoppingCart, MapPin } from 'lucide-react'
 import { restaurants, categories, currentUser } from '@/data/mockData'
+import { useCartStore } from '@/store/cartStore'
 import { RestaurantCard } from '@/components/restaurant/RestaurantCard'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
 import { CategoryChip } from '@/components/restaurant/CategoryChip'
@@ -9,6 +11,8 @@ import { SearchBar } from '@/components/home/SearchBar'
 import { SkeletonCard } from '@/components/common/SkeletonCard'
 
 export function Home() {
+  const navigate = useNavigate()
+  const count = useCartStore((s) => s.count())
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('Todos')
   const [query, setQuery] = useState('')
@@ -40,8 +44,25 @@ export function Home() {
               {currentUser.location}
             </div>
           </div>
-          <button className="relative">
+          <button
+            type="button"
+            onClick={() => navigate('/sacola')}
+            className="relative w-10 h-10 rounded-full flex items-center justify-center hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label={
+              count > 0
+                ? `Abrir sacola com ${count} ${count === 1 ? 'item' : 'itens'}`
+                : 'Abrir sacola'
+            }
+          >
             <ShoppingCart size={22} className="text-ink" />
+            {count > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-primary text-white text-[10px] font-semibold rounded-full flex items-center justify-center"
+              >
+                {count > 99 ? '99+' : count}
+              </span>
+            )}
           </button>
         </div>
         <div className="mt-3">

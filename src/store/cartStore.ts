@@ -4,6 +4,8 @@ import type { CartLine, MenuItem } from '@/types'
 interface CartState {
   lines: CartLine[]
   addItem: (restaurantId: string, restaurantName: string, item: MenuItem) => void
+  incrementItem: (itemId: string) => void
+  decrementItem: (itemId: string) => void
   removeItem: (itemId: string) => void
   clear: () => void
   total: () => number
@@ -28,11 +30,27 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
   },
 
+  incrementItem: (itemId) =>
+    set({
+      lines: get().lines.map((l) =>
+        l.item.id === itemId ? { ...l, quantity: l.quantity + 1 } : l
+      ),
+    }),
+
+  decrementItem: (itemId) =>
+    set({
+      lines: get().lines.flatMap((l) => {
+        if (l.item.id !== itemId) return [l]
+        return l.quantity > 1 ? [{ ...l, quantity: l.quantity - 1 }] : []
+      }),
+    }),
+
   removeItem: (itemId) =>
     set({ lines: get().lines.filter((l) => l.item.id !== itemId) }),
 
   clear: () => set({ lines: [] }),
 
+  // Subtotal of items only. Delivery fees are calculated by the cart page.
   total: () =>
     get().lines.reduce((sum, l) => sum + l.item.price * l.quantity, 0),
 

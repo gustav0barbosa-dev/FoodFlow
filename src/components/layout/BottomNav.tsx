@@ -1,6 +1,5 @@
 import { Home, Search, ReceiptText, User } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
-import { useCartStore } from '@/store/cartStore'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -11,8 +10,6 @@ const tabs = [
 ]
 
 export function BottomNav() {
-  const count = useCartStore((s) => s.count())
-
   return (
     <nav className="absolute bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex items-center justify-around">
       {tabs.map(({ to, label, icon: Icon }) => (
@@ -26,14 +23,7 @@ export function BottomNav() {
             )
           }
         >
-          <div className="relative">
-            <Icon size={22} />
-            {to === '/pedidos' && count > 0 && (
-              <span className="absolute -top-1 -right-2 bg-primary text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                {count}
-              </span>
-            )}
-          </div>
+          <Icon size={22} />
           {label}
         </NavLink>
       ))}

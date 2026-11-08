@@ -6,6 +6,7 @@ import { Onboarding } from '@/pages/Onboarding'
 import { Home } from '@/pages/Home'
 import { Search } from '@/pages/Search'
 import { RestaurantDetail } from '@/pages/RestaurantDetail'
+import { Cart } from '@/pages/Cart'
 import { Orders } from '@/pages/Orders'
 import { Profile } from '@/pages/Profile'
 
@@ -42,6 +43,7 @@ export default function App() {
             }
           />
           <Route path="/restaurante/:id" element={<RestaurantDetail />} />
+          <Route path="/sacola" element={<Cart />} />
           <Route
             path="/pedidos"
             element={
