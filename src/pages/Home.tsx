@@ -32,10 +32,15 @@ export function Home() {
   const category = useHomeFiltersStore((s) => s.category)
   const setCategory = useHomeFiltersStore((s) => s.setCategory)
   const resetFilters = useHomeFiltersStore((s) => s.resetFilters)
+  const handleResetFilters = () => {
+    resetFilters()
+    setMaxDistance(null)
+  }
   const [loadedCount, setLoadedCount] = useState(3)
   const [recommendedLoadedCount, setRecommendedLoadedCount] = useState(3)
   const query = useHomeSearchStore((s) => s.query)
   const setQuery = useHomeSearchStore((s) => s.setQuery)
+  const [maxDistance, setMaxDistance] = useState<number | null>(null)
   const nearbyRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -50,7 +55,9 @@ export function Home() {
   )
 
   const nearby = sortRestaurants(
-    filtered.filter((r) => !category || r.category === category),
+    filtered
+      .filter((r) => !category || r.category === category)
+      .filter((r) => maxDistance === null || r.distanceKm <= maxDistance),
     sort
   )
 
@@ -170,11 +177,32 @@ export function Home() {
           </select>
           <button
             type="button"
-            onClick={resetFilters}
+            onClick={handleResetFilters}
             className="text-xs font-medium text-primary px-2 py-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             Limpar filtros
           </button>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <label htmlFor="restaurant-distance" className="text-xs text-ink-soft">
+            Raio máximo
+          </label>
+          <select
+            id="restaurant-distance"
+            value={maxDistance ?? ''}
+            onChange={(event) =>
+              setMaxDistance(
+                event.target.value === '' ? null : Number(event.target.value)
+              )
+            }
+            className="rounded-xl border border-gray-200 bg-white px-2 py-1.5 text-xs text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <option value="">Sem limite</option>
+            <option value="1">1 km</option>
+            <option value="3">3 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+          </select>
         </div>
         <div className="space-y-3 mt-2">
           {loading
