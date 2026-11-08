@@ -65,6 +65,7 @@ export function Search() {
                 key={restaurant.id}
                 restaurant={restaurant}
                 source="search_results"
+                query={query}
               />
             ))}
 

@@ -103,7 +103,12 @@ export function Home() {
             : filtered
                 .filter((r) => r.isRecommended)
                 .map((r) => (
-                  <RestaurantCard key={r.id} restaurant={r} source="home_featured" />
+                  <RestaurantCard
+                    key={r.id}
+                    restaurant={r}
+                    source="home_featured"
+                    query={query}
+                  />
                 ))}
         </div>
       </section>
@@ -141,7 +146,12 @@ export function Home() {
                 <Skeleton key={i} variant="card" />
               ))
             : nearby.map((r) => (
-                <RestaurantCompactCard key={r.id} restaurant={r} source="home_nearby" />
+                <RestaurantCompactCard
+                  key={r.id}
+                  restaurant={r}
+                  source="home_nearby"
+                  query={query}
+                />
               ))}
           {!loading && nearby.length === 0 && (
             <p className="text-center text-ink-soft text-sm py-6">

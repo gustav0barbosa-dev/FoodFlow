@@ -130,7 +130,7 @@ foodflow/
     │   ├── layout/                 ← MobileFrame, BottomNav
     │   ├── home/                   ← SearchBar, FilterChips
     │   ├── restaurant/             ← RestaurantCard, MenuItem, ReviewCard…
-    │   └── common/                 ← Skeleton, EmptyState, ErrorState
+    │   └── common/                 ← Skeleton, HighlightMatch, EmptyState, ErrorState
     └── pages/
         ├── Onboarding.tsx
         ├── Home.tsx

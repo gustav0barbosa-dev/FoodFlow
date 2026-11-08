@@ -3,16 +3,21 @@ import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
 import { useEventsStore } from '@/store/eventsStore'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
+import { HighlightMatch } from '@/components/common/HighlightMatch'
+import { getMatchingMenuItems } from '@/lib/search'
 import { formatBRL } from '@/lib/utils'
 
 export function RestaurantCompactCard({
   restaurant,
   source = 'home_nearby',
+  query = '',
 }: {
   restaurant: Restaurant
   source?: string
+  query?: string
 }) {
   const trackEvent = useEventsStore((s) => s.trackEvent)
+  const matchingItems = getMatchingMenuItems(restaurant, query)
 
   const handleClick = () => {
     trackEvent('restaurant_card_clicked', {
@@ -35,8 +40,29 @@ export function RestaurantCompactCard({
           className="w-20 h-20 rounded-xl object-cover shrink-0"
         />
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-ink truncate">{restaurant.name}</h3>
-          <p className="text-xs text-ink-soft truncate">{restaurant.category}</p>
+          <h3 className="font-semibold text-ink truncate">
+            <HighlightMatch text={restaurant.name} query={query} />
+          </h3>
+          <p className="text-xs text-ink-soft truncate">
+            <HighlightMatch text={restaurant.category} query={query} />
+          </p>
+          {matchingItems.length > 0 && (
+            <p
+              className="mt-1 text-xs text-ink-soft truncate"
+              title={matchingItems.map((item) => item.name).join(', ')}
+            >
+              <span className="font-medium text-primary-dark">Pratos: </span>
+              {matchingItems.slice(0, 2).map((item, index) => (
+                <span key={item.id}>
+                  {index > 0 && ', '}
+                  <HighlightMatch text={item.name} query={query} />
+                </span>
+              ))}
+              {matchingItems.length > 2 && (
+                <span> +{matchingItems.length - 2}</span>
+              )}
+            </p>
+          )}
           <div className="flex items-center gap-2 mt-1 text-xs text-ink-soft">
             <span className="flex items-center gap-1">
               <Star size={12} className="text-star fill-star" />

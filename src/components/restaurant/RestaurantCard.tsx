@@ -3,16 +3,19 @@ import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
 import { useEventsStore } from '@/store/eventsStore'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
+import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { cn } from '@/lib/utils'
 
 export function RestaurantCard({
   restaurant,
   size = 'lg',
   source = 'home_featured',
+  query = '',
 }: {
   restaurant: Restaurant
   size?: 'lg' | 'sm'
   source?: string
+  query?: string
 }) {
   const isLarge = size === 'lg'
   const trackEvent = useEventsStore((s) => s.trackEvent)
@@ -50,8 +53,12 @@ export function RestaurantCard({
           )}
         </div>
         <div className="p-3">
-          <h3 className="font-semibold text-ink truncate">{restaurant.name}</h3>
-          <p className="text-xs text-ink-soft truncate">{restaurant.category}</p>
+          <h3 className="font-semibold text-ink truncate">
+            <HighlightMatch text={restaurant.name} query={query} />
+          </h3>
+          <p className="text-xs text-ink-soft truncate">
+            <HighlightMatch text={restaurant.category} query={query} />
+          </p>
           <div className="flex items-center gap-2 mt-1.5 text-xs text-ink-soft">
             <span className="flex items-center gap-1">
               <Star size={12} className="text-star fill-star" />
