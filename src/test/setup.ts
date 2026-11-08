@@ -7,6 +7,7 @@ import { usePreferencesStore } from '@/store/preferencesStore'
 import { DEFAULT_ADDRESS, useAddressStore } from '@/store/addressStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { useEventFiltersStore } from '@/store/eventFiltersStore'
+import { DEFAULT_RESTAURANT_SORT, useSortStore } from '@/store/sortStore'
 
 afterEach(() => {
   cleanup()
@@ -21,4 +22,5 @@ beforeEach(() => {
   useAddressStore.setState({ address: DEFAULT_ADDRESS })
   useEventsStore.setState({ events: [] })
   useEventFiltersStore.setState({ type: 'all', period: 'all' })
+  useSortStore.setState({ sort: DEFAULT_RESTAURANT_SORT })
 })

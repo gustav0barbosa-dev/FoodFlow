@@ -16,6 +16,7 @@ import {
   sortRestaurants,
   type RestaurantSort,
 } from '@/lib/sort'
+import { useSortStore } from '@/store/sortStore'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 export function Home() {
@@ -24,7 +25,8 @@ export function Home() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('Todos')
   const [category, setCategory] = useState<string | null>(null)
-  const [sort, setSort] = useState<RestaurantSort>('recommended')
+  const sort = useSortStore((s) => s.sort)
+  const setSort = useSortStore((s) => s.setSort)
   const [query, setQuery] = useState('')
   const nearbyRef = useRef<HTMLElement>(null)
 

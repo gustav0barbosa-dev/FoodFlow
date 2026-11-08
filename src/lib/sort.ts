@@ -19,6 +19,10 @@ const sorters: Record<RestaurantSort, (a: Restaurant, b: Restaurant) => number> 
   distance: (a, b) => a.distanceKm - b.distanceKm || b.rating - a.rating,
 }
 
+export function isRestaurantSort(value: unknown): value is RestaurantSort {
+  return RESTAURANT_SORT_OPTIONS.some((option) => option.value === value)
+}
+
 export function sortRestaurants(
   restaurants: Restaurant[],
   sort: RestaurantSort

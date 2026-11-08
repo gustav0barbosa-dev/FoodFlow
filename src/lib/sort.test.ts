@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Restaurant } from '@/types'
-import { sortRestaurants } from '@/lib/sort'
+import { isRestaurantSort, sortRestaurants } from '@/lib/sort'
 
 function buildRestaurant(overrides: Partial<Restaurant>): Restaurant {
   return {
@@ -73,5 +73,11 @@ describe('sortRestaurants', () => {
 
     expect(sorted.map((r) => r.id)).toEqual(['b', 'a'])
     expect(restaurants.map((r) => r.id)).toEqual(['a', 'b'])
+  })
+
+  it('valida as opções de ordenação', () => {
+    expect(isRestaurantSort('rating')).toBe(true)
+    expect(isRestaurantSort('invalido')).toBe(false)
+    expect(isRestaurantSort(null)).toBe(false)
   })
 })

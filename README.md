@@ -125,7 +125,7 @@ foodflow/
     ├── data/
     │   └── mockData.ts             ← restaurantes, categorias, usuário mock
     ├── store/
-    │   └── cartStore.ts            ← Zustand (addItem, total, count)
+    │   └── *Store.ts               ← Zustand (carrinho, pedidos, favoritos, filtros…)
     ├── components/
     │   ├── layout/                 ← MobileFrame, BottomNav
     │   ├── home/                   ← SearchBar, FilterChips
