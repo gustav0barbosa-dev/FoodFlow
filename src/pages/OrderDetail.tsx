@@ -1,17 +1,23 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronLeft, MapPin, ShoppingBag } from 'lucide-react'
-import { useOrdersStore, type OrderStatus } from '@/store/ordersStore'
+import { toast } from 'sonner'
+import {
+  ORDER_STATUS_FLOW,
+  nextOrderStatus,
+  useOrdersStore,
+} from '@/store/ordersStore'
+import { useEventsStore } from '@/store/eventsStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
 import { formatOrderDate, groupOrderItems, orderRestaurantLabel } from '@/lib/orders'
 import { cn, formatBRL } from '@/lib/utils'
 
-const STATUS_STEPS: OrderStatus[] = ['Em preparo', 'Saiu para entrega', 'Entregue']
-
 export function OrderDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const order = useOrdersStore((s) => s.orders.find((item) => item.id === id))
+  const advanceOrderStatus = useOrdersStore((s) => s.advanceOrderStatus)
+  const trackEvent = useEventsStore((s) => s.trackEvent)
   const reorder = useOrderReorder()
 
   if (!order) {
@@ -38,7 +44,20 @@ export function OrderDetail() {
   }
 
   const groups = groupOrderItems(order)
-  const activeStep = STATUS_STEPS.indexOf(order.status)
+  const activeStep = ORDER_STATUS_FLOW.indexOf(order.status)
+  const nextStatus = nextOrderStatus(order.status)
+
+  const handleAdvance = () => {
+    const updated = advanceOrderStatus(order.id)
+    if (!updated || updated.status === order.status) return
+
+    trackEvent('order_status_updated', {
+      orderId: updated.id,
+      status: updated.status,
+      previousStatus: order.status,
+    })
+    toast.success(`Status atualizado para "${updated.status}"`)
+  }
 
   return (
     <div className="h-full overflow-y-auto bg-surface-muted">
@@ -67,7 +86,7 @@ export function OrderDetail() {
           </div>
 
           <ol className="mt-4 space-y-3" aria-label="Acompanhamento do pedido">
-            {STATUS_STEPS.map((step, index) => {
+            {ORDER_STATUS_FLOW.map((step, index) => {
               const reached = index <= activeStep
               return (
                 <li
@@ -96,6 +115,22 @@ export function OrderDetail() {
               )
             })}
           </ol>
+
+          {nextStatus ? (
+            <button
+              type="button"
+              onClick={handleAdvance}
+              className="mt-4 w-full rounded-xl border border-primary/30 py-2.5 text-sm font-semibold text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            >
+              {nextStatus === 'Saiu para entrega'
+                ? 'Confirmar saída para entrega'
+                : 'Confirmar entrega'}
+            </button>
+          ) : (
+            <p className="mt-4 text-xs text-ink-soft">
+              Pedido concluído. Obrigado por pedir com a FoodFlow!
+            </p>
+          )}
         </section>
 
         <section className="bg-white rounded-2xl p-4 border border-gray-100">

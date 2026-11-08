@@ -3,6 +3,19 @@ import { persist } from 'zustand/middleware'
 
 export type OrderStatus = 'Em preparo' | 'Saiu para entrega' | 'Entregue'
 
+export const ORDER_STATUS_FLOW: OrderStatus[] = [
+  'Em preparo',
+  'Saiu para entrega',
+  'Entregue',
+]
+
+export function nextOrderStatus(status: OrderStatus): OrderStatus | null {
+  const index = ORDER_STATUS_FLOW.indexOf(status)
+  if (index === -1 || index === ORDER_STATUS_FLOW.length - 1) return null
+  return ORDER_STATUS_FLOW[index + 1]
+}
+
+
 export interface OrderItem {
   id: string
   name: string
@@ -62,6 +75,7 @@ const seedOrders: Order[] = [
 interface OrdersState {
   orders: Order[]
   addOrder: (input: NewOrderInput) => Order
+  advanceOrderStatus: (orderId: string) => Order | undefined
 }
 
 export const useOrdersStore = create<OrdersState>()(
@@ -85,6 +99,22 @@ export const useOrdersStore = create<OrdersState>()(
 
         set({ orders: [order, ...get().orders] })
         return order
+      },
+
+      advanceOrderStatus: (orderId) => {
+        const current = get().orders.find((order) => order.id === orderId)
+        if (!current) return undefined
+
+        const nextStatus = nextOrderStatus(current.status)
+        if (!nextStatus) return current
+
+        const updated: Order = { ...current, status: nextStatus }
+        set({
+          orders: get().orders.map((order) =>
+            order.id === orderId ? updated : order
+          ),
+        })
+        return updated
       },
     }),
     {

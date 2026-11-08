@@ -10,6 +10,7 @@ const labels: Record<EventType, string> = {
   preferences_updated: 'Preferências atualizadas',
   search_performed: 'Busca realizada',
   favorite_toggled: 'Favorito alterado',
+  order_status_updated: 'Status do pedido atualizado',
 }
 
 const timeFormatter = new Intl.DateTimeFormat('pt-BR', {

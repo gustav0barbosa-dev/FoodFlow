@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { useOrdersStore, type NewOrderInput } from '@/store/ordersStore'
+import {
+  nextOrderStatus,
+  useOrdersStore,
+  type NewOrderInput,
+} from '@/store/ordersStore'
 
 function buildOrder(overrides: Partial<NewOrderInput> = {}): NewOrderInput {
   return {
@@ -54,5 +58,27 @@ describe('ordersStore', () => {
     ])
 
     expect(ids.size).toBe(3)
+  })
+
+  it('avança o status até entregue e para no fim da fila', () => {
+    const { addOrder, advanceOrderStatus } = useOrdersStore.getState()
+    const order = addOrder(buildOrder())
+
+    expect(advanceOrderStatus(order.id)?.status).toBe('Saiu para entrega')
+    expect(advanceOrderStatus(order.id)?.status).toBe('Entregue')
+    expect(advanceOrderStatus(order.id)?.status).toBe('Entregue')
+    expect(useOrdersStore.getState().orders[0].status).toBe('Entregue')
+  })
+
+  it('retorna undefined ao avançar um pedido inexistente', () => {
+    expect(useOrdersStore.getState().advanceOrderStatus('inexistente')).toBeUndefined()
+  })
+})
+
+describe('nextOrderStatus', () => {
+  it('segue a ordem de preparo, entrega e conclusão', () => {
+    expect(nextOrderStatus('Em preparo')).toBe('Saiu para entrega')
+    expect(nextOrderStatus('Saiu para entrega')).toBe('Entregue')
+    expect(nextOrderStatus('Entregue')).toBeNull()
   })
 })
