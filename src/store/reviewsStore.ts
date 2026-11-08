@@ -10,7 +10,10 @@ export interface UserReview extends Review {
 interface ReviewsState {
   reviews: UserReview[]
   addReview: (restaurantId: string, rating: number, comment: string) => void
+  updateReview: (restaurantId: string, rating: number, comment: string) => void
+  removeReview: (restaurantId: string) => void
   getReviewsForRestaurant: (restaurantId: string) => Review[]
+  getUserReview: (restaurantId: string) => UserReview | undefined
   hasReviewed: (restaurantId: string) => boolean
 }
 
@@ -32,8 +35,28 @@ export const useReviewsStore = create<ReviewsState>()(
         set({ reviews: [review, ...get().reviews] })
       },
 
+      updateReview: (restaurantId, rating, comment) => {
+        const review = get().reviews.find((r) => r.restaurantId === restaurantId)
+        if (!review) return
+
+        set({
+          reviews: get().reviews.map((r) =>
+            r.restaurantId === restaurantId
+              ? { ...r, rating, comment, date: new Date().toISOString() }
+              : r
+          ),
+        })
+      },
+
+      removeReview: (restaurantId) => {
+        set({ reviews: get().reviews.filter((r) => r.restaurantId !== restaurantId) })
+      },
+
       getReviewsForRestaurant: (restaurantId) =>
         get().reviews.filter((r) => r.restaurantId === restaurantId),
+
+      getUserReview: (restaurantId) =>
+        get().reviews.find((r) => r.restaurantId === restaurantId),
 
       hasReviewed: (restaurantId) =>
         get().reviews.some((r) => r.restaurantId === restaurantId),

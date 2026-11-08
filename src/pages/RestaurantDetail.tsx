@@ -7,6 +7,7 @@ import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { UserReviewForm } from '@/components/restaurant/UserReviewForm'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { EmptyState } from '@/components/common/EmptyState'
+import { toast } from 'sonner'
 import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
@@ -20,10 +21,14 @@ export function RestaurantDetail() {
   const count = useCartStore((s) => s.count())
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const lastTrackedId = useRef<string | null>(null)
+  const getUserReview = useReviewsStore((s) => s.getUserReview)
+  const removeReview = useReviewsStore((s) => s.removeReview)
+  const [editingReview, setEditingReview] = useState(false)
 
   const restaurant = restaurants.find((r) => r.id === id)
   const userReviews = useReviewsStore((s) => s.getReviewsForRestaurant(id ?? ''))
-  const hasReviewed = useReviewsStore((s) => s.hasReviewed(id ?? ''))
+  const userReview = getUserReview(id ?? '')
+  const hasReviewed = !!userReview
 
   useEffect(() => {
     if (!restaurant || lastTrackedId.current === restaurant.id) return
@@ -162,8 +167,58 @@ export function RestaurantDetail() {
             ))}
           {tab === 'reviews' && (
             <div className="space-y-4">
-              {!hasReviewed && (
+              {!hasReviewed && !editingReview && (
                 <UserReviewForm restaurantId={id!} onReviewSubmitted={() => {}} />
+              )}
+              {hasReviewed && userReview && !editingReview && (
+                <section className="bg-green-50 border border-green-100 rounded-xl p-3">
+                  <p className="text-xs text-ink-soft mb-1">
+                    Sua avaliação
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 text-sm text-ink">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          size={14}
+                          className={star <= userReview.rating ? 'text-star fill-star' : 'text-gray-300'}
+                        />
+                      ))}
+                    </div>
+                    <p className="text-sm text-ink">{userReview.comment}</p>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingReview(true)
+                      }}
+                      className="text-xs font-medium text-primary px-2 py-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        removeReview(id!)
+                        toast.success('Avaliação removida')
+                      }}
+                      className="text-xs font-medium text-ink-soft px-2 py-1.5 rounded hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                </section>
+              )}
+              {editingReview && userReview && (
+                <UserReviewForm
+                  restaurantId={id!}
+                  initialRating={userReview.rating}
+                  initialComment={userReview.comment}
+                  onReviewSubmitted={() => {
+                    setEditingReview(false)
+                  }}
+                />
               )}
               <h3 className="font-semibold text-ink text-sm">
                 Avaliações ({restaurant.reviews.length + userReviews.length})

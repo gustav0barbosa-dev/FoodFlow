@@ -1,5 +1,5 @@
 import { Star } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
@@ -8,16 +8,28 @@ import { cn } from '@/lib/utils'
 interface UserReviewFormProps {
   restaurantId: string
   onReviewSubmitted: () => void
+  initialRating?: number
+  initialComment?: string
 }
 
 export function UserReviewForm({
   restaurantId,
   onReviewSubmitted,
+  initialRating,
+  initialComment,
 }: UserReviewFormProps) {
-  const [rating, setRating] = useState(0)
-  const [comment, setComment] = useState('')
+  const [rating, setRating] = useState(initialRating ?? 0)
+  const [comment, setComment] = useState(initialComment ?? '')
+  const [isEditing, setIsEditing] = useState(!!(initialRating ?? initialComment))
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const addReview = useReviewsStore((s) => s.addReview)
+  const updateReview = useReviewsStore((s) => s.updateReview)
+
+  useEffect(() => {
+    if (initialRating !== undefined) setRating(initialRating)
+    if (initialComment !== undefined) setComment(initialComment)
+    setIsEditing(!!(initialRating ?? initialComment))
+  }, [initialRating, initialComment])
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -27,16 +39,27 @@ export function UserReviewForm({
       return
     }
 
-    addReview(restaurantId, rating, comment)
-    trackEvent('review_submitted', {
-      restaurantId,
-      rating: String(rating),
-    })
+    if (isEditing) {
+      updateReview(restaurantId, rating, comment)
+      trackEvent('review_submitted', {
+        restaurantId,
+        rating: String(rating),
+        updated: 'true',
+      })
+      toast.success('Avaliação atualizada com sucesso')
+    } else {
+      addReview(restaurantId, rating, comment)
+      trackEvent('review_submitted', {
+        restaurantId,
+        rating: String(rating),
+      })
+      toast.success('Avaliação enviada com sucesso')
+    }
 
     onReviewSubmitted()
     setRating(0)
     setComment('')
-    toast.success('Avaliação enviada com sucesso')
+    setIsEditing(false)
   }
 
   return (
@@ -95,7 +118,7 @@ export function UserReviewForm({
         disabled={rating === 0 || comment.trim().length === 0}
         className="w-full bg-primary text-white rounded-xl py-2.5 font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       >
-        Enviar avaliação
+        {isEditing ? 'Atualizar avaliação' : 'Enviar avaliação'}
       </button>
     </form>
   )
