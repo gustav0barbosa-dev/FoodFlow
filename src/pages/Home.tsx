@@ -11,6 +11,11 @@ import { SearchBar } from '@/components/home/SearchBar'
 import { PreferenceMatches } from '@/components/home/PreferenceMatches'
 import { Skeleton } from '@/components/common/Skeleton'
 import { filterRestaurants } from '@/lib/search'
+import {
+  RESTAURANT_SORT_OPTIONS,
+  sortRestaurants,
+  type RestaurantSort,
+} from '@/lib/sort'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 export function Home() {
@@ -19,6 +24,7 @@ export function Home() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('Todos')
   const [category, setCategory] = useState<string | null>(null)
+  const [sort, setSort] = useState<RestaurantSort>('recommended')
   const [query, setQuery] = useState('')
   const nearbyRef = useRef<HTMLElement>(null)
 
@@ -33,7 +39,10 @@ export function Home() {
       filter === 'Todos' || r.tags.some((t) => t.toLowerCase().includes(filter.toLowerCase()))
   )
 
-  const nearby = filtered.filter((r) => !category || r.category === category)
+  const nearby = sortRestaurants(
+    filtered.filter((r) => !category || r.category === category),
+    sort
+  )
 
   useSearchTracking({ query, results: searched.length, source: 'home' })
 
@@ -109,6 +118,23 @@ export function Home() {
           {category && <span className="text-primary"> · {category}</span>}
         </h2>
         <FilterChips active={filter} onChange={setFilter} />
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <label htmlFor="restaurant-sort" className="text-xs text-ink-soft">
+            Ordenar por
+          </label>
+          <select
+            id="restaurant-sort"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as RestaurantSort)}
+            className="rounded-xl border border-gray-200 bg-white px-2 py-1.5 text-xs text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            {RESTAURANT_SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="space-y-3 mt-2">
           {loading
             ? Array.from({ length: 3 }).map((_, i) => (
