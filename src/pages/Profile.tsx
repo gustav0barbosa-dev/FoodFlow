@@ -1,4 +1,5 @@
 import { currentUser } from '@/data/mockData'
+import { EventsPanel } from '@/components/profile/EventsPanel'
 
 export function Profile() {
   return (
@@ -35,6 +36,8 @@ export function Profile() {
           </p>
           {/* TODO: sliders de faixa de preço, chips de culinária favorita */}
         </section>
+
+        <EventsPanel />
 
         <section className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-100">
           {['Notificações', 'Endereços', 'Pagamento', 'Sair'].map((item) => (

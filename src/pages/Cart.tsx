@@ -5,6 +5,7 @@ import type { CartLine } from '@/types'
 import { restaurants } from '@/data/mockData'
 import { useCartStore } from '@/store/cartStore'
 import { useOrdersStore } from '@/store/ordersStore'
+import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
 import { CartLineItem } from '@/components/cart/CartLineItem'
 import { ConfirmOrderModal } from '@/components/cart/ConfirmOrderModal'
@@ -43,6 +44,7 @@ export function Cart() {
   const lines = useCartStore((s) => s.lines)
   const clear = useCartStore((s) => s.clear)
   const addOrder = useOrdersStore((s) => s.addOrder)
+  const trackEvent = useEventsStore((s) => s.trackEvent)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const groups = groupByRestaurant(lines)
@@ -64,7 +66,7 @@ export function Cart() {
   }
 
   const handleConfirm = () => {
-    addOrder({
+    const order = addOrder({
       restaurantNames: groups.map((group) => group.restaurantName),
       items: lines.map((line) => ({
         id: line.item.id,
@@ -75,6 +77,12 @@ export function Cart() {
       subtotal,
       deliveryFee,
       total,
+    })
+    trackEvent('order_completed', {
+      orderId: order.id,
+      itemCount: order.itemCount,
+      total: order.total,
+      restaurantIds: groups.map((group) => group.restaurantId),
     })
     clear()
   }

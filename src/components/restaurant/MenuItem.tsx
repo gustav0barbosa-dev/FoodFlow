@@ -2,6 +2,7 @@ import { Plus } from 'lucide-react'
 import type { MenuItem as MenuItemType } from '@/types'
 import { formatBRL } from '@/lib/utils'
 import { useCartStore } from '@/store/cartStore'
+import { useEventsStore } from '@/store/eventsStore'
 import { toast } from 'sonner'
 
 export function MenuItem({
@@ -14,9 +15,17 @@ export function MenuItem({
   restaurantName: string
 }) {
   const addItem = useCartStore((s) => s.addItem)
+  const trackEvent = useEventsStore((s) => s.trackEvent)
 
   const handleAdd = () => {
     addItem(restaurantId, restaurantName, item)
+    trackEvent('add_to_cart', {
+      restaurantId,
+      restaurantName,
+      itemId: item.id,
+      itemName: item.name,
+      price: item.price,
+    })
     toast.success('Adicionado ao carrinho')
   }
 

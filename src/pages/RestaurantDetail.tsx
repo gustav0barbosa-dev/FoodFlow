@@ -1,10 +1,11 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, Star, MapPin, Phone, Bike, Clock } from 'lucide-react'
 import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { useCartStore } from '@/store/cartStore'
+import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
 
 export function RestaurantDetail() {
@@ -13,8 +14,21 @@ export function RestaurantDetail() {
   const [tab, setTab] = useState<'menu' | 'reviews' | 'about'>('menu')
   const total = useCartStore((s) => s.total())
   const count = useCartStore((s) => s.count())
+  const trackEvent = useEventsStore((s) => s.trackEvent)
+  const lastTrackedId = useRef<string | null>(null)
 
   const restaurant = restaurants.find((r) => r.id === id)
+
+  useEffect(() => {
+    if (!restaurant || lastTrackedId.current === restaurant.id) return
+    lastTrackedId.current = restaurant.id
+    trackEvent('restaurant_opened', {
+      restaurantId: restaurant.id,
+      restaurantName: restaurant.name,
+      category: restaurant.category,
+    })
+  }, [restaurant, trackEvent])
+
   if (!restaurant) {
     return <div className="p-6 text-center">Restaurante não encontrado</div>
   }
