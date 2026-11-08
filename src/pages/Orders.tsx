@@ -1,15 +1,15 @@
 import { ShoppingBag } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
 import { useOrdersStore } from '@/store/ordersStore'
 import type { Order, OrderStatus } from '@/store/ordersStore'
+import { useOrderStatusFilterStore, type OrderStatusFilter } from '@/store/orderStatusFilterStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
 import { EmptyState } from '@/components/common/EmptyState'
 import { formatOrderDate, orderRestaurantLabel } from '@/lib/orders'
 import { formatBRL } from '@/lib/utils'
 
-export type OrderStatusFilter = 'todos' | 'andamento' | 'entregues'
+export type { OrderStatusFilter } from '@/store/orderStatusFilterStore'
 
 const STATUS_FILTER_OPTIONS: {
   value: OrderStatusFilter
@@ -31,7 +31,8 @@ function matchesStatusFilter(order: Order, filter: OrderStatusFilter): boolean {
 export function Orders() {
   const navigate = useNavigate()
   const orders = useOrdersStore((s) => s.orders)
-  const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('todos')
+  const statusFilter = useOrderStatusFilterStore((s) => s.filter)
+  const setStatusFilter = useOrderStatusFilterStore((s) => s.setFilter)
   const reorder = useOrderReorder()
 
   const filteredOrders = orders.filter((o) => matchesStatusFilter(o, statusFilter))
