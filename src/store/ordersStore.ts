@@ -18,6 +18,7 @@ export interface Order {
   subtotal: number
   deliveryFee: number
   total: number
+  address?: string
   status: OrderStatus
   createdAt: string
 }
@@ -28,6 +29,7 @@ export interface NewOrderInput {
   subtotal: number
   deliveryFee: number
   total: number
+  address: string
 }
 
 const seedOrders: Order[] = [
@@ -39,6 +41,7 @@ const seedOrders: Order[] = [
     subtotal: 42.9,
     deliveryFee: 5.99,
     total: 48.89,
+    address: 'R. das Flores, 123 — Osasco, SP',
     status: 'Entregue',
     createdAt: '2026-10-28T19:30:00',
   },
@@ -50,6 +53,7 @@ const seedOrders: Order[] = [
     subtotal: 32.5,
     deliveryFee: 0,
     total: 32.5,
+    address: 'R. das Flores, 123 — Osasco, SP',
     status: 'Entregue',
     createdAt: '2026-10-20T12:15:00',
   },
@@ -74,6 +78,7 @@ export const useOrdersStore = create<OrdersState>()(
           subtotal: input.subtotal,
           deliveryFee: input.deliveryFee,
           total: input.total,
+          address: input.address,
           status: 'Em preparo',
           createdAt: new Date().toISOString(),
         }

@@ -5,9 +5,12 @@ import type { CartLine } from '@/types'
 import { restaurants } from '@/data/mockData'
 import { useCartStore } from '@/store/cartStore'
 import { useOrdersStore } from '@/store/ordersStore'
+import { useAddressStore } from '@/store/addressStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
 import { CartLineItem } from '@/components/cart/CartLineItem'
+import { CartSummary } from '@/components/cart/CartSummary'
+import { DeliveryAddress } from '@/components/cart/DeliveryAddress'
 import { ConfirmOrderModal } from '@/components/cart/ConfirmOrderModal'
 
 interface CartGroup {
@@ -44,6 +47,7 @@ export function Cart() {
   const lines = useCartStore((s) => s.lines)
   const clear = useCartStore((s) => s.clear)
   const addOrder = useOrdersStore((s) => s.addOrder)
+  const address = useAddressStore((s) => s.address)
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -77,6 +81,7 @@ export function Cart() {
       subtotal,
       deliveryFee,
       total,
+      address,
     })
     trackEvent('order_completed', {
       orderId: order.id,
@@ -159,25 +164,12 @@ export function Cart() {
               </section>
             ))}
 
-            <section className="bg-white rounded-2xl p-4 border border-gray-100">
-              <h2 className="font-display font-semibold text-ink mb-2">Resumo do pedido</h2>
-              <dl className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <dt className="text-ink-soft">Subtotal</dt>
-                  <dd className="text-ink">{formatBRL(subtotal)}</dd>
-                </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-ink-soft">Entrega</dt>
-                  <dd className="text-ink">
-                    {deliveryFee === 0 ? 'Grátis' : formatBRL(deliveryFee)}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between border-t border-gray-100 pt-2">
-                  <dt className="font-semibold text-ink">Total</dt>
-                  <dd className="font-bold text-primary">{formatBRL(total)}</dd>
-                </div>
-              </dl>
-            </section>
+            <DeliveryAddress />
+            <CartSummary
+              subtotal={subtotal}
+              deliveryFee={deliveryFee}
+              total={total}
+            />
           </div>
 
           <div className="shrink-0 bg-white border-t border-gray-100 p-4">

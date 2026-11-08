@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ShoppingBag } from 'lucide-react'
+import { ChevronLeft, MapPin, ShoppingBag } from 'lucide-react'
 import { useOrdersStore, type OrderStatus } from '@/store/ordersStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
@@ -96,6 +96,16 @@ export function OrderDetail() {
               )
             })}
           </ol>
+        </section>
+
+        <section className="bg-white rounded-2xl p-4 border border-gray-100">
+          <h2 className="font-display font-semibold text-ink flex items-center gap-1.5 mb-2">
+            <MapPin size={16} className="text-primary" />
+            Endereço de entrega
+          </h2>
+          <p className="text-sm text-ink">
+            {order.address ?? 'Endereço não informado'}
+          </p>
         </section>
 
         {groups.map((group) => (

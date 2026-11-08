@@ -8,6 +8,7 @@ function buildOrder(overrides: Partial<NewOrderInput> = {}): NewOrderInput {
     subtotal: 42.9,
     deliveryFee: 5.99,
     total: 48.89,
+    address: 'R. das Flores, 123 — Osasco, SP',
     ...overrides,
   }
 }
@@ -29,6 +30,7 @@ describe('ordersStore', () => {
     expect(order.subtotal).toBe(85.8)
     expect(order.deliveryFee).toBe(5.99)
     expect(order.total).toBe(91.79)
+    expect(order.address).toBe('R. das Flores, 123 — Osasco, SP')
   })
 
   it('coloca o pedido mais recente no topo', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { useAddressStore, DEFAULT_ADDRESS } from '@/store/addressStore'
 import { useCartStore } from '@/store/cartStore'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { usePreferencesStore } from '@/store/preferencesStore'
@@ -87,5 +88,31 @@ describe('preferencesStore', () => {
 
     clearPreferences()
     expect(usePreferencesStore.getState().preferences).toEqual([])
+  })
+})
+
+describe('addressStore', () => {
+  it('salva o endereço sem espaços nas pontas', () => {
+    useAddressStore.getState().setAddress('  Av. Brasil, 500 — São Paulo, SP  ')
+
+    expect(useAddressStore.getState().address).toBe('Av. Brasil, 500 — São Paulo, SP')
+  })
+
+  it('ignora endereços vazios e mantém o valor anterior', () => {
+    useAddressStore.getState().setAddress('Rua Nova, 10 — Osasco, SP')
+    useAddressStore.getState().setAddress('   ')
+
+    expect(useAddressStore.getState().address).toBe('Rua Nova, 10 — Osasco, SP')
+  })
+
+  it('persiste o endereço em localStorage', () => {
+    useAddressStore.getState().setAddress('Rua Persistida, 42 — Osasco, SP')
+
+    const stored = localStorage.getItem('foodflow-address')
+    expect(stored).toContain('Rua Persistida, 42')
+  })
+
+  it('inicia com o endereço padrão', () => {
+    expect(DEFAULT_ADDRESS).toBe('R. das Flores, 123 — Osasco, SP')
   })
 })
