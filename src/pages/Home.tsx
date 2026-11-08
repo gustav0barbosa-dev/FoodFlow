@@ -17,6 +17,7 @@ import {
   type RestaurantSort,
 } from '@/lib/sort'
 import { useHomeFiltersStore } from '@/store/homeFiltersStore'
+import { useHomeSearchStore } from '@/store/homeSearchStore'
 import { useSortStore } from '@/store/sortStore'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
@@ -31,9 +32,10 @@ export function Home() {
   const category = useHomeFiltersStore((s) => s.category)
   const setCategory = useHomeFiltersStore((s) => s.setCategory)
   const resetFilters = useHomeFiltersStore((s) => s.resetFilters)
-  const [query, setQuery] = useState('')
   const [loadedCount, setLoadedCount] = useState(3)
   const [recommendedLoadedCount, setRecommendedLoadedCount] = useState(3)
+  const query = useHomeSearchStore((s) => s.query)
+  const setQuery = useHomeSearchStore((s) => s.setQuery)
   const nearbyRef = useRef<HTMLElement>(null)
 
   useEffect(() => {

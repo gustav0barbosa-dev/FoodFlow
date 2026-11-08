@@ -10,6 +10,7 @@ import { useEventFiltersStore } from '@/store/eventFiltersStore'
 import { DEFAULT_RESTAURANT_SORT, useSortStore } from '@/store/sortStore'
 import { DEFAULT_HOME_CATEGORY, DEFAULT_HOME_FILTER, useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { DEFAULT_ORDER_STATUS_FILTER, useOrderStatusFilterStore } from '@/store/orderStatusFilterStore'
+import { DEFAULT_HOME_SEARCH_QUERY, useHomeSearchStore } from '@/store/homeSearchStore'
 
 afterEach(() => {
   cleanup()
@@ -30,4 +31,5 @@ beforeEach(() => {
     category: DEFAULT_HOME_CATEGORY,
   })
   useOrderStatusFilterStore.setState({ filter: DEFAULT_ORDER_STATUS_FILTER })
+  useHomeSearchStore.setState({ query: DEFAULT_HOME_SEARCH_QUERY })
 })
