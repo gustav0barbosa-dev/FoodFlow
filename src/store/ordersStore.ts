@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 export type OrderStatus = 'Em preparo' | 'Saiu para entrega' | 'Entregue'
 
@@ -59,23 +60,31 @@ interface OrdersState {
   addOrder: (input: NewOrderInput) => Order
 }
 
-export const useOrdersStore = create<OrdersState>((set, get) => ({
-  orders: [...seedOrders],
+export const useOrdersStore = create<OrdersState>()(
+  persist(
+    (set, get) => ({
+      orders: [...seedOrders],
 
-  addOrder: (input) => {
-    const order: Order = {
-      id: `o${Date.now()}`,
-      restaurantNames: input.restaurantNames,
-      items: input.items,
-      itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
-      subtotal: input.subtotal,
-      deliveryFee: input.deliveryFee,
-      total: input.total,
-      status: 'Em preparo',
-      createdAt: new Date().toISOString(),
+      addOrder: (input) => {
+        const order: Order = {
+          id: `o${Date.now()}`,
+          restaurantNames: input.restaurantNames,
+          items: input.items,
+          itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
+          subtotal: input.subtotal,
+          deliveryFee: input.deliveryFee,
+          total: input.total,
+          status: 'Em preparo',
+          createdAt: new Date().toISOString(),
+        }
+
+        set({ orders: [order, ...get().orders] })
+        return order
+      },
+    }),
+    {
+      name: 'foodflow-orders',
+      partialize: (state) => ({ orders: state.orders }),
     }
-
-    set({ orders: [order, ...get().orders] })
-    return order
-  },
-}))
+  )
+)
