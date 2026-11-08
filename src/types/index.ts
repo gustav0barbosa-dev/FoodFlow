@@ -41,6 +41,8 @@ export interface Restaurant {
   isRecommended: boolean
   menu: MenuItem[]
   reviews: Review[]
+  hours: string
+  paymentMethods: string[]
 }
 
 export interface CartLine {

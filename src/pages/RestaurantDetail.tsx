@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed } from 'lucide-react'
-import { restaurants, currentUser } from '@/data/mockData'
+import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed, CreditCard } from 'lucide-react'
+import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { UserReviewForm } from '@/components/restaurant/UserReviewForm'
@@ -24,10 +24,6 @@ export function RestaurantDetail() {
   const restaurant = restaurants.find((r) => r.id === id)
   const userReviews = useReviewsStore((s) => s.getReviewsForRestaurant(id ?? ''))
   const hasReviewed = useReviewsStore((s) => s.hasReviewed(id ?? ''))
-  const addReview = useReviewsStore((s) => s.addReview)
-  const trackEvent = useEventsStore((s) => s.trackEvent)
-  const [userRating, setUserRating] = useState(0)
-  const [userComment, setUserComment] = useState('')
 
   useEffect(() => {
     if (!restaurant || lastTrackedId.current === restaurant.id) return
@@ -167,39 +163,12 @@ export function RestaurantDetail() {
           {tab === 'reviews' && (
             <div className="space-y-4">
               {!hasReviewed && (
-                <UserReviewForm
-                  restaurantId={id!}
-                  onReviewSubmitted={() => {
-                    setUserRating(0)
-                    setUserComment('')
-                  }}
-                />
-              )}
-              {hasReviewed && (
-                <div className="bg-green-50 border border-green-100 rounded-xl p-3">
-                  <p className="text-xs text-ink-soft mb-1">
-                    Você já avaliou este restaurante
-                  </p>
-                  <div className="flex items-center gap-1 text-sm text-ink">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Star
-                        key={star}
-                        size={14}
-                        className={star <= userRating ? 'text-star fill-star' : 'text-gray-300'}
-                      />
-                    ))}
-                    <span className="ml-1 text-[12px] text-ink-soft">
-                      {userRating} estrela{userRating !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                </div>
+                <UserReviewForm restaurantId={id!} onReviewSubmitted={() => {}} />
               )}
               <h3 className="font-semibold text-ink text-sm">
                 Avaliações ({restaurant.reviews.length + userReviews.length})
               </h3>
-              {userReviews.map((r) => (
-                <ReviewCard key={r.id} review={{ ...r, restaurantId: undefined }} />
-              ))}
+              {userReviews.map((r) => <ReviewCard key={r.id} review={r} />)}
               {restaurant.reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
               {userReviews.length === 0 && restaurant.reviews.length === 0 && (
                 <p className="text-xs text-ink-soft text-center py-4">
@@ -209,10 +178,28 @@ export function RestaurantDetail() {
             </div>
           )}
           {tab === 'about' && (
-            <p className="text-sm text-ink-soft py-3">
-              {/* TODO: horários, formas de pagamento */}
-              Informações do restaurante em breve.
-            </p>
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Clock size={14} className="text-primary" />
+                <span className="font-medium text-ink">Horário de funcionamento</span>
+              </div>
+              <p className="text-sm text-ink">{restaurant.hours}</p>
+
+              <div className="flex items-center gap-2">
+                <CreditCard size={14} className="text-primary" />
+                <span className="font-medium text-ink">Formas de pagamento</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {restaurant.paymentMethods.map((method) => (
+                  <span
+                    key={method}
+                    className="text-xs text-ink border border-gray-200 rounded-full px-3 py-1"
+                  >
+                    {method}
+                  </span>
+                ))}
+              </div>
+            </section>
           )}
         </div>
       </div>

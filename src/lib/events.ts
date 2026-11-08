@@ -9,6 +9,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   search_performed: 'Busca realizada',
   favorite_toggled: 'Favorito alterado',
   order_status_updated: 'Status do pedido atualizado',
+  review_submitted: 'Avaliação enviada',
 }
 
 export const EVENT_TYPES = Object.keys(EVENT_LABELS) as EventType[]

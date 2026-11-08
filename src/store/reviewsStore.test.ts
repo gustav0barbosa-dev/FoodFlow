@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useReviewsStore } from '@/store/reviewsStore'
-import type { UserReview } from '@/store/reviewsStore'
 
 describe('reviewsStore', () => {
   beforeEach(() => {

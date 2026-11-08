@@ -21,6 +21,8 @@ function buildRestaurant(overrides: Partial<Restaurant>): Restaurant {
     isRecommended: false,
     menu: [],
     reviews: [],
+    hours: 'Seg a Sex: 09h–18h',
+    paymentMethods: ['Cartão', 'Pix'],
     ...overrides,
   }
 }

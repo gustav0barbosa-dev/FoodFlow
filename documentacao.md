@@ -418,14 +418,14 @@ alto impacto**, o projeto inclui:
   -----------------------------------------------------------------------
   Fase                    Período                 Entregável
   ----------------------- ----------------------- -----------------------
-  **Fase 1**              Semanas 1--3            Modelagem do banco
+  **Fase 1**                             Modelagem do banco
                                                   (PostGIS), endpoint de
                                                   busca geoespacial e
                                                   aplicativo React Native
                                                   com mapa e lista de
                                                   restaurantes próximos.
 
-  **Fase 2**              Semanas 4--6            Coleta de eventos,
+  **Fase 2**                                Coleta de eventos,
                                                   feature store básica,
                                                   treino do primeiro
                                                   modelo LightGBM com
@@ -433,7 +433,7 @@ alto impacto**, o projeto inclui:
                                                   sintéticos/públicos e
                                                   serving via Redis.
 
-  **Fase 3**              Semanas 7--9            Integração do feed
+  **Fase 3**                            Integração do feed
                                                   personalizado no
                                                   aplicativo, tela de
                                                   detalhes do restaurante
@@ -441,7 +441,7 @@ alto impacto**, o projeto inclui:
                                                   e pipeline de
                                                   avaliações.
 
-  **Fase 4**              Semanas 10--12          Fine-tuning LoRA de um
+  **Fase 4**                            Fine-tuning LoRA de um
                                                   LLM pequeno para
                                                   re-ranking, publicação
                                                   no Hugging Face,
