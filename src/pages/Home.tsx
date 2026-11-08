@@ -16,6 +16,7 @@ import {
   sortRestaurants,
   type RestaurantSort,
 } from '@/lib/sort'
+import { useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { useSortStore } from '@/store/sortStore'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
@@ -23,10 +24,13 @@ export function Home() {
   const navigate = useNavigate()
   const count = useCartStore((s) => s.count())
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('Todos')
-  const [category, setCategory] = useState<string | null>(null)
   const sort = useSortStore((s) => s.sort)
   const setSort = useSortStore((s) => s.setSort)
+  const filter = useHomeFiltersStore((s) => s.filter)
+  const setFilter = useHomeFiltersStore((s) => s.setFilter)
+  const category = useHomeFiltersStore((s) => s.category)
+  const setCategory = useHomeFiltersStore((s) => s.setCategory)
+  const resetFilters = useHomeFiltersStore((s) => s.resetFilters)
   const [query, setQuery] = useState('')
   const nearbyRef = useRef<HTMLElement>(null)
 
@@ -49,7 +53,7 @@ export function Home() {
   useSearchTracking({ query, results: searched.length, source: 'home' })
 
   const handleCategory = (name: string) => {
-    setCategory((current) => (current === name ? null : name))
+    setCategory(category === name ? null : name)
     nearbyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
@@ -141,6 +145,13 @@ export function Home() {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="text-xs font-medium text-primary px-2 py-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            Limpar filtros
+          </button>
         </div>
         <div className="space-y-3 mt-2">
           {loading
