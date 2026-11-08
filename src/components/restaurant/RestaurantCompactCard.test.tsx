@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { restaurants } from '@/data/mockData'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
 
-const restaurant = restaurants.find((item) => item.id === 'r1')!
+const r1 = restaurants.find((item) => item.id === 'r1')!
+const r7 = restaurants.find((item) => item.id === 'r7')!
 
-function renderCard(query: string) {
+function renderCard(restaurant: (typeof restaurants)[number], query: string) {
   return render(
     <MemoryRouter>
       <RestaurantCompactCard restaurant={restaurant} query={query} />
@@ -16,16 +17,30 @@ function renderCard(query: string) {
 
 describe('RestaurantCompactCard', () => {
   it('mostra os pratos correspondentes com destaque', () => {
-    renderCard('feijoada')
+    renderCard(r1, 'feijoada')
 
     expect(screen.getByText('Feijoada').tagName).toBe('MARK')
     expect(screen.getByText(/Pratos:/)).toBeTruthy()
   })
 
+  it('destaca o prato correspondente pela descrição', () => {
+    renderCard(r1, 'vinagrete')
+
+    expect(screen.getByText('vinagrete').tagName).toBe('MARK')
+    expect(screen.getByText(/Pratos:/)).toBeTruthy()
+  })
+
+  it('destaca a descrição quando o nome não corresponde', () => {
+    renderCard(r7, 'folhado')
+
+    expect(screen.getByText('Croissant de Manteiga').tagName).not.toBe('MARK')
+    expect(screen.getByText(/Pratos:/)).toBeTruthy()
+  })
+
   it('não mostra a linha de pratos sem busca', () => {
-    renderCard('')
+    renderCard(r1, '')
 
     expect(screen.queryByText(/Pratos:/)).toBeNull()
-    expect(screen.getByText(restaurant.name)).toBeTruthy()
+    expect(screen.getByText(r1.name)).toBeTruthy()
   })
 })

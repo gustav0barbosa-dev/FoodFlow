@@ -38,6 +38,11 @@ function includesTerm(value: string, term: string) {
   return normalize(value).includes(term)
 }
 
+export function matchesQuery(text: string, query: string) {
+  const term = normalize(query.trim())
+  return term.length > 0 && includesTerm(text, term)
+}
+
 export function getMatchingMenuItems(
   restaurant: Restaurant,
   query: string
@@ -45,7 +50,9 @@ export function getMatchingMenuItems(
   const term = normalize(query.trim())
   if (!term) return []
 
-  return restaurant.menu.filter((item) => includesTerm(item.name, term))
+  return restaurant.menu.filter(
+    (item) => includesTerm(item.name, term) || includesTerm(item.description, term)
+  )
 }
 
 export function filterRestaurants(restaurants: Restaurant[], query: string) {
@@ -56,7 +63,10 @@ export function filterRestaurants(restaurants: Restaurant[], query: string) {
     (restaurant) =>
       includesTerm(restaurant.name, term) ||
       includesTerm(restaurant.category, term) ||
-      restaurant.menu.some((item) => includesTerm(item.name, term))
+      restaurant.menu.some(
+        (item) =>
+          includesTerm(item.name, term) || includesTerm(item.description, term)
+      )
   )
 }
 

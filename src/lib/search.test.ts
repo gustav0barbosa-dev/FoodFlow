@@ -3,6 +3,7 @@ import { restaurants } from '@/data/mockData'
 import {
   filterRestaurants,
   getMatchingMenuItems,
+  matchesQuery,
   splitHighlight,
 } from '@/lib/search'
 
@@ -32,6 +33,19 @@ describe('filterRestaurants', () => {
     ])
   })
 
+  it('encontra restaurantes por descrição do prato', () => {
+    expect(filterRestaurants(restaurants, 'vinagrete').map((r) => r.id)).toEqual([
+      'r1',
+    ])
+    expect(filterRestaurants(restaurants, 'folhado').map((r) => r.id)).toEqual([
+      'r7',
+    ])
+    expect(filterRestaurants(restaurants, 'granola').map((r) => r.id)).toEqual([
+      'r2',
+      'r6',
+    ])
+  })
+
   it('encontra prato ignorando acentos', () => {
     expect(filterRestaurants(restaurants, 'tiramisu').map((r) => r.id)).toEqual([
       'r3',
@@ -42,19 +56,38 @@ describe('filterRestaurants', () => {
     ])
   })
 
+  it('encontra descrição ignorando acentos', () => {
+    expect(filterRestaurants(restaurants, 'lime').map((r) => r.id)).toEqual([])
+    expect(
+      filterRestaurants(restaurants, 'granola').map((r) => r.id)
+    ).toEqual(['r2', 'r6'])
+  })
+
   it('retorna lista vazia quando não há correspondência', () => {
     expect(filterRestaurants(restaurants, 'comida marciana')).toEqual([])
   })
 })
 
 describe('getMatchingMenuItems', () => {
-  it('retorna apenas os pratos correspondentes', () => {
+  it('retorna apenas os pratos correspondentes pelo nome', () => {
     const restaurant = restaurants.find((r) => r.id === 'r5')
 
     expect(restaurant).toBeDefined()
     expect(
       getMatchingMenuItems(restaurant!, 'sashimi').map((item) => item.name)
-    ).toEqual(['Sashimi de Salmão (10 fatias)'])
+    ).toEqual([
+      'Combinado Kaze (24 peças)',
+      'Sashimi de Salmão (10 fatias)',
+    ])
+  })
+
+  it('retorna pratos correspondentes pela descrição', () => {
+    const restaurant = restaurants.find((r) => r.id === 'r1')
+
+    expect(restaurant).toBeDefined()
+    expect(
+      getMatchingMenuItems(restaurant!, 'vinagrete').map((item) => item.name)
+    ).toEqual(['Costela da Vila'])
   })
 
   it('retorna lista vazia para busca vazia', () => {
@@ -62,6 +95,21 @@ describe('getMatchingMenuItems', () => {
 
     expect(restaurant).toBeDefined()
     expect(getMatchingMenuItems(restaurant!, '  ')).toEqual([])
+  })
+})
+
+describe('matchesQuery', () => {
+  it('corresponde ignorando acentos e caixa', () => {
+    expect(matchesQuery('Açaí Bowl', 'acai')).toBe(true)
+    expect(matchesQuery('Feijoada Completa', 'FEIJOADA')).toBe(true)
+  })
+
+  it('retorna falso quando não há correspondência', () => {
+    expect(matchesQuery('Pizza da Praça', 'sushi')).toBe(false)
+  })
+
+  it('retorna falso para busca vazia', () => {
+    expect(matchesQuery('Qualquer coisa', '   ')).toBe(false)
   })
 })
 

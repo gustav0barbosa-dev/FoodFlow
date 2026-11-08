@@ -4,7 +4,7 @@ import type { Restaurant } from '@/types'
 import { useEventsStore } from '@/store/eventsStore'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
-import { getMatchingMenuItems } from '@/lib/search'
+import { getMatchingMenuItems, matchesQuery } from '@/lib/search'
 import { formatBRL } from '@/lib/utils'
 
 export function RestaurantCompactCard({
@@ -49,13 +49,21 @@ export function RestaurantCompactCard({
           {matchingItems.length > 0 && (
             <p
               className="mt-1 text-xs text-ink-soft truncate"
-              title={matchingItems.map((item) => item.name).join(', ')}
+              title={matchingItems
+                .map((item) => `${item.name} — ${item.description}`)
+                .join(' · ')}
             >
               <span className="font-medium text-primary-dark">Pratos: </span>
               {matchingItems.slice(0, 2).map((item, index) => (
                 <span key={item.id}>
                   {index > 0 && ', '}
                   <HighlightMatch text={item.name} query={query} />
+                  {!matchesQuery(item.name, query) && (
+                    <span>
+                      {' — '}
+                      <HighlightMatch text={item.description} query={query} />
+                    </span>
+                  )}
                 </span>
               ))}
               {matchingItems.length > 2 && (
