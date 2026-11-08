@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ShoppingCart, MapPin } from 'lucide-react'
 import { restaurants, categories, currentUser } from '@/data/mockData'
@@ -15,7 +15,9 @@ export function Home() {
   const count = useCartStore((s) => s.count())
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('Todos')
+  const [category, setCategory] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const nearbyRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 500)
@@ -31,6 +33,13 @@ export function Home() {
       filter === 'Todos' || r.tags.some((t) => t.toLowerCase().includes(filter.toLowerCase()))
     return matchesQuery && matchesFilter
   })
+
+  const nearby = filtered.filter((r) => !category || r.category === category)
+
+  const handleCategory = (name: string) => {
+    setCategory((current) => (current === name ? null : name))
+    nearbyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
@@ -81,21 +90,30 @@ export function Home() {
             ? Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
             : filtered
                 .filter((r) => r.isRecommended)
-                .map((r) => <RestaurantCard key={r.id} restaurant={r} />)}
+                .map((r) => (
+                  <RestaurantCard key={r.id} restaurant={r} source="home_featured" />
+                ))}
         </div>
       </section>
 
       {/* Perto de você */}
-      <section className="px-4 mt-4">
-        <h2 className="font-display font-bold text-lg text-ink mb-2">Perto de você</h2>
+      <section ref={nearbyRef} className="px-4 mt-4 scroll-mt-28">
+        <h2 className="font-display font-bold text-lg text-ink mb-2">
+          Perto de você
+          {category && <span className="text-primary"> · {category}</span>}
+        </h2>
         <FilterChips active={filter} onChange={setFilter} />
         <div className="space-y-3 mt-2">
           {loading
             ? Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
-            : filtered.map((r) => <RestaurantCompactCard key={r.id} restaurant={r} />)}
-          {!loading && filtered.length === 0 && (
+            : nearby.map((r) => (
+                <RestaurantCompactCard key={r.id} restaurant={r} source="home_nearby" />
+              ))}
+          {!loading && nearby.length === 0 && (
             <p className="text-center text-ink-soft text-sm py-6">
-              Nenhum restaurante encontrado
+              {category
+                ? `Nenhum restaurante de ${category} encontrado`
+                : 'Nenhum restaurante encontrado'}
             </p>
           )}
         </div>
@@ -103,10 +121,27 @@ export function Home() {
 
       {/* Categorias */}
       <section className="px-4 mt-6">
-        <h2 className="font-display font-bold text-lg text-ink mb-2">Categorias</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-display font-bold text-lg text-ink">Categorias</h2>
+          {category && (
+            <button
+              type="button"
+              onClick={() => setCategory(null)}
+              className="text-xs font-medium text-primary rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Limpar
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-4 gap-3">
           {categories.map((c) => (
-            <CategoryChip key={c.id} emoji={c.emoji} name={c.name} />
+            <CategoryChip
+              key={c.id}
+              emoji={c.emoji}
+              name={c.name}
+              active={category === c.name}
+              onSelect={() => handleCategory(c.name)}
+            />
           ))}
         </div>
       </section>
