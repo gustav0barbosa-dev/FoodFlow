@@ -1,18 +1,22 @@
 import { useState } from 'react'
-import { restaurants } from '@/data/mockData'
 import { SearchBar } from '@/components/home/SearchBar'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
-import { filterRestaurants } from '@/lib/search'
+import { SkeletonRow } from '@/components/common/SkeletonRow'
+import { useRestaurantSearch } from '@/hooks/useRestaurantSearch'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 const recentSearches = ['pizza', 'japonês', 'açaí', 'hambúrguer']
 
 export function Search() {
   const [query, setQuery] = useState('')
+  const { results, loading, error, retry } = useRestaurantSearch(query)
 
-  const results = filterRestaurants(restaurants, query)
-
-  useSearchTracking({ query, results: results.length, source: 'search_page' })
+  useSearchTracking({
+    query,
+    results: results.length,
+    source: 'search_page',
+    enabled: !loading && !error,
+  })
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
@@ -40,11 +44,34 @@ export function Search() {
           </>
         )}
 
-        <div className="space-y-3">
-          {results.map((r) => (
-            <RestaurantCompactCard key={r.id} restaurant={r} source="search_results" />
-          ))}
-          {results.length === 0 && (
+        <div className="space-y-3" aria-busy={loading}>
+          {loading &&
+            Array.from({ length: 3 }).map((_, index) => <SkeletonRow key={index} />)}
+
+          {!loading && error && (
+            <div role="alert" className="text-center py-10">
+              <p className="text-sm text-ink-soft">{error}</p>
+              <button
+                type="button"
+                onClick={retry}
+                className="mt-3 text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          )}
+
+          {!loading &&
+            !error &&
+            results.map((restaurant) => (
+              <RestaurantCompactCard
+                key={restaurant.id}
+                restaurant={restaurant}
+                source="search_results"
+              />
+            ))}
+
+          {!loading && !error && results.length === 0 && (
             <p className="text-center text-ink-soft text-sm py-10">
               Nenhum restaurante encontrado
             </p>

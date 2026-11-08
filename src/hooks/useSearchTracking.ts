@@ -8,15 +8,19 @@ export function useSearchTracking({
   query,
   results,
   source,
+  enabled = true,
 }: {
   query: string
   results: number
   source: string
+  enabled?: boolean
 }) {
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const lastTracked = useRef('')
 
   useEffect(() => {
+    if (!enabled) return
+
     const term = query.trim()
     if (term.length < MIN_QUERY_LENGTH) return
 
@@ -27,5 +31,5 @@ export function useSearchTracking({
     }, DEBOUNCE_MS)
 
     return () => clearTimeout(timeout)
-  }, [query, results, source, trackEvent])
+  }, [query, results, source, enabled, trackEvent])
 }
