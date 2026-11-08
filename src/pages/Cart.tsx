@@ -12,6 +12,7 @@ import { CartLineItem } from '@/components/cart/CartLineItem'
 import { CartSummary } from '@/components/cart/CartSummary'
 import { DeliveryAddress } from '@/components/cart/DeliveryAddress'
 import { ConfirmOrderModal } from '@/components/cart/ConfirmOrderModal'
+import { EmptyState } from '@/components/common/EmptyState'
 
 interface CartGroup {
   restaurantId: string
@@ -114,24 +115,14 @@ export function Cart() {
       </header>
 
       {lines.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
-          <div className="w-20 h-20 rounded-full bg-white text-ink-soft flex items-center justify-center shadow-sm">
-            <ShoppingBag size={32} />
-          </div>
-          <h2 className="mt-4 font-display text-lg font-bold text-ink">
-            Sua sacola está vazia
-          </h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Adicione itens de um restaurante para começar seu pedido.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('/home')}
-            className="mt-6 bg-primary text-white rounded-2xl px-6 py-3 font-semibold hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            Explorar restaurantes
-          </button>
-        </div>
+        <EmptyState
+          icon={ShoppingBag}
+          title="Sua sacola está vazia"
+          description="Adicione itens de um restaurante para começar seu pedido."
+          actionLabel="Explorar restaurantes"
+          onAction={() => navigate('/home')}
+          className="flex-1"
+        />
       ) : (
         <>
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">

@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { SearchX } from 'lucide-react'
 import { SearchBar } from '@/components/home/SearchBar'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
 import { SkeletonRow } from '@/components/common/SkeletonRow'
+import { EmptyState } from '@/components/common/EmptyState'
+import { ErrorState } from '@/components/common/ErrorState'
 import { useRestaurantSearch } from '@/hooks/useRestaurantSearch'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
@@ -50,16 +53,7 @@ export function Search() {
             Array.from({ length: 3 }).map((_, index) => <SkeletonRow key={index} />)}
 
           {!loading && error && (
-            <div role="alert" className="text-center py-10">
-              <p className="text-sm text-ink-soft">{error}</p>
-              <button
-                type="button"
-                onClick={retry}
-                className="mt-3 text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                Tentar novamente
-              </button>
-            </div>
+            <ErrorState description={error} onAction={retry} />
           )}
 
           {!loading &&
@@ -73,9 +67,12 @@ export function Search() {
             ))}
 
           {!loading && !error && results.length === 0 && (
-            <p className="text-center text-ink-soft text-sm py-10">
-              Nenhum restaurante encontrado
-            </p>
+            <EmptyState
+              icon={SearchX}
+              title="Nenhum restaurante encontrado"
+              description="Tente outro termo ou revise a ortografia."
+              className="py-10"
+            />
           )}
         </div>
       </div>

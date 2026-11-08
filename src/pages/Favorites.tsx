@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { restaurants } from '@/data/mockData'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
+import { EmptyState } from '@/components/common/EmptyState'
 
 export function Favorites() {
   const navigate = useNavigate()
@@ -35,24 +36,14 @@ export function Favorites() {
       </header>
 
       {favorites.length === 0 ? (
-        <div className="flex flex-col items-center justify-center px-8 pt-24 text-center">
-          <div className="w-20 h-20 rounded-full bg-white text-ink-soft flex items-center justify-center shadow-sm">
-            <Heart size={32} />
-          </div>
-          <h2 className="mt-4 font-display text-lg font-bold text-ink">
-            Nenhum favorito ainda
-          </h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Toque no coração dos restaurantes que você gosta para encontrá-los aqui.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('/home')}
-            className="mt-6 bg-primary text-white rounded-2xl px-6 py-3 font-semibold hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            Explorar restaurantes
-          </button>
-        </div>
+        <EmptyState
+          icon={Heart}
+          title="Nenhum favorito ainda"
+          description="Toque no coração dos restaurantes que você gosta para encontrá-los aqui."
+          actionLabel="Explorar restaurantes"
+          onAction={() => navigate('/home')}
+          className="pt-24"
+        />
       ) : (
         <div className="p-4 space-y-3">
           {favorites.map((restaurant) => (

@@ -1,10 +1,11 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink } from 'lucide-react'
+import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed } from 'lucide-react'
 import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
+import { EmptyState } from '@/components/common/EmptyState'
 import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
@@ -31,7 +32,17 @@ export function RestaurantDetail() {
   }, [restaurant, trackEvent])
 
   if (!restaurant) {
-    return <div className="p-6 text-center">Restaurante não encontrado</div>
+    return (
+      <EmptyState
+        icon={UtensilsCrossed}
+        headingLevel="h1"
+        title="Restaurante não encontrado"
+        description="Ele pode ter saído do ar ou o link está incorreto."
+        actionLabel="Voltar"
+        onAction={() => navigate(-1)}
+        className="h-full bg-white"
+      />
+    )
   }
 
   return (

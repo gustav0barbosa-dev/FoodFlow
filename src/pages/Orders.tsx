@@ -1,12 +1,14 @@
 import { ShoppingBag } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useOrdersStore } from '@/store/ordersStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
+import { EmptyState } from '@/components/common/EmptyState'
 import { formatOrderDate, orderRestaurantLabel } from '@/lib/orders'
 import { formatBRL } from '@/lib/utils'
 
 export function Orders() {
+  const navigate = useNavigate()
   const orders = useOrdersStore((s) => s.orders)
   const reorder = useOrderReorder()
 
@@ -22,17 +24,14 @@ export function Orders() {
       </header>
 
       {orders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center px-8 pt-24 text-center">
-          <div className="w-20 h-20 rounded-full bg-white text-ink-soft flex items-center justify-center shadow-sm">
-            <ShoppingBag size={32} />
-          </div>
-          <h2 className="mt-4 font-display text-lg font-bold text-ink">
-            Você ainda não fez pedidos
-          </h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Seus pedidos aparecerão aqui depois da primeira compra.
-          </p>
-        </div>
+        <EmptyState
+          icon={ShoppingBag}
+          title="Você ainda não fez pedidos"
+          description="Seus pedidos aparecerão aqui depois da primeira compra."
+          actionLabel="Explorar restaurantes"
+          onAction={() => navigate('/home')}
+          className="pt-24"
+        />
       ) : (
         <div className="p-4 space-y-3">
           {orders.map((order) => (

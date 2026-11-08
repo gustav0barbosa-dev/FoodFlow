@@ -9,6 +9,7 @@ import {
 import { useEventsStore } from '@/store/eventsStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
+import { EmptyState } from '@/components/common/EmptyState'
 import { formatOrderDate, groupOrderItems, orderRestaurantLabel } from '@/lib/orders'
 import { cn, formatBRL } from '@/lib/utils'
 
@@ -22,24 +23,15 @@ export function OrderDetail() {
 
   if (!order) {
     return (
-      <div className="h-full flex flex-col items-center justify-center px-8 text-center bg-surface-muted">
-        <div className="w-20 h-20 rounded-full bg-white text-ink-soft flex items-center justify-center shadow-sm">
-          <ShoppingBag size={32} />
-        </div>
-        <h1 className="mt-4 font-display text-lg font-bold text-ink">
-          Pedido não encontrado
-        </h1>
-        <p className="mt-1 text-sm text-ink-soft">
-          Este pedido pode ter sido removido do histórico.
-        </p>
-        <button
-          type="button"
-          onClick={() => navigate('/pedidos')}
-          className="mt-6 bg-primary text-white rounded-2xl px-6 py-3 font-semibold hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          Voltar aos pedidos
-        </button>
-      </div>
+      <EmptyState
+        icon={ShoppingBag}
+        headingLevel="h1"
+        title="Pedido não encontrado"
+        description="Este pedido pode ter sido removido do histórico."
+        actionLabel="Voltar aos pedidos"
+        onAction={() => navigate('/pedidos')}
+        className="h-full bg-surface-muted"
+      />
     )
   }
 
