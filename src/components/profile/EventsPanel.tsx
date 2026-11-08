@@ -8,6 +8,7 @@ const labels: Record<EventType, string> = {
   add_to_cart: 'Item adicionado',
   order_completed: 'Pedido concluído',
   preferences_updated: 'Preferências atualizadas',
+  search_performed: 'Busca realizada',
 }
 
 const timeFormatter = new Intl.DateTimeFormat('pt-BR', {

@@ -9,6 +9,8 @@ import { CategoryChip } from '@/components/restaurant/CategoryChip'
 import { FilterChips } from '@/components/home/FilterChips'
 import { SearchBar } from '@/components/home/SearchBar'
 import { SkeletonCard } from '@/components/common/SkeletonCard'
+import { filterRestaurants } from '@/lib/search'
+import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 export function Home() {
   const navigate = useNavigate()
@@ -24,17 +26,15 @@ export function Home() {
     return () => clearTimeout(t)
   }, [])
 
-  const filtered = restaurants.filter((r) => {
-    const matchesQuery =
-      !query ||
-      r.name.toLowerCase().includes(query.toLowerCase()) ||
-      r.category.toLowerCase().includes(query.toLowerCase())
-    const matchesFilter =
+  const searched = filterRestaurants(restaurants, query)
+  const filtered = searched.filter(
+    (r) =>
       filter === 'Todos' || r.tags.some((t) => t.toLowerCase().includes(filter.toLowerCase()))
-    return matchesQuery && matchesFilter
-  })
+  )
 
   const nearby = filtered.filter((r) => !category || r.category === category)
+
+  useSearchTracking({ query, results: searched.length, source: 'home' })
 
   const handleCategory = (name: string) => {
     setCategory((current) => (current === name ? null : name))

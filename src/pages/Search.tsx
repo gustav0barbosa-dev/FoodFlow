@@ -2,18 +2,17 @@ import { useState } from 'react'
 import { restaurants } from '@/data/mockData'
 import { SearchBar } from '@/components/home/SearchBar'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
+import { filterRestaurants } from '@/lib/search'
+import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 const recentSearches = ['pizza', 'japonês', 'açaí', 'hambúrguer']
 
 export function Search() {
   const [query, setQuery] = useState('')
 
-  const results = restaurants.filter(
-    (r) =>
-      !query ||
-      r.name.toLowerCase().includes(query.toLowerCase()) ||
-      r.category.toLowerCase().includes(query.toLowerCase())
-  )
+  const results = filterRestaurants(restaurants, query)
+
+  useSearchTracking({ query, results: results.length, source: 'search_page' })
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
@@ -30,8 +29,9 @@ export function Search() {
               {recentSearches.map((s) => (
                 <button
                   key={s}
+                  type="button"
                   onClick={() => setQuery(s)}
-                  className="px-3 py-1.5 bg-white border border-gray-200 rounded-full text-sm text-ink"
+                  className="px-3 py-1.5 bg-white border border-gray-200 rounded-full text-sm text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   {s}
                 </button>
