@@ -8,6 +8,7 @@ export type EventType =
   | 'order_completed'
   | 'preferences_updated'
   | 'search_performed'
+  | 'favorite_toggled'
 
 export type EventPayload = Record<string, string | number | string[]>
 

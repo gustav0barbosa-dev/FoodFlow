@@ -9,6 +9,7 @@ import { RestaurantDetail } from '@/pages/RestaurantDetail'
 import { Cart } from '@/pages/Cart'
 import { Orders } from '@/pages/Orders'
 import { Profile } from '@/pages/Profile'
+import { Favorites } from '@/pages/Favorites'
 
 function WithNav({ children }: { children: React.ReactNode }) {
   return (
@@ -45,6 +46,7 @@ export default function App() {
             />
             <Route path="/restaurante/:id" element={<RestaurantDetail />} />
             <Route path="/sacola" element={<Cart />} />
+            <Route path="/favoritos" element={<Favorites />} />
             <Route
               path="/pedidos"
               element={

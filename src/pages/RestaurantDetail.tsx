@@ -4,6 +4,7 @@ import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink } from 'luc
 import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
+import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
@@ -46,6 +47,7 @@ export function RestaurantDetail() {
         >
           <ChevronLeft size={20} />
         </button>
+        <FavoriteButton restaurant={restaurant} className="absolute top-3 right-3" />
       </div>
 
       <div className="p-4">
