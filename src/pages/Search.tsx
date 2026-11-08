@@ -42,7 +42,7 @@ export function Search() {
 
         <div className="space-y-3">
           {results.map((r) => (
-            <RestaurantCompactCard key={r.id} restaurant={r} />
+            <RestaurantCompactCard key={r.id} restaurant={r} source="search_results" />
           ))}
           {results.length === 0 && (
             <p className="text-center text-ink-soft text-sm py-10">

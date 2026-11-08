@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type EventType = 'restaurant_opened' | 'add_to_cart' | 'order_completed'
+export type EventType =
+  | 'restaurant_card_clicked'
+  | 'restaurant_opened'
+  | 'add_to_cart'
+  | 'order_completed'
 
 export type EventPayload = Record<string, string | number | string[]>
 

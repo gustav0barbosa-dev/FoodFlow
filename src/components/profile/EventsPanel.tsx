@@ -3,6 +3,7 @@ import { useEventsStore } from '@/store/eventsStore'
 import type { EventPayload, EventType } from '@/store/eventsStore'
 
 const labels: Record<EventType, string> = {
+  restaurant_card_clicked: 'Card clicado',
   restaurant_opened: 'Restaurante aberto',
   add_to_cart: 'Item adicionado',
   order_completed: 'Pedido concluído',

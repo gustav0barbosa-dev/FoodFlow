@@ -1,12 +1,30 @@
 import { Star, MapPin, Bike } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
+import { useEventsStore } from '@/store/eventsStore'
 import { formatBRL } from '@/lib/utils'
 
-export function RestaurantCompactCard({ restaurant }: { restaurant: Restaurant }) {
+export function RestaurantCompactCard({
+  restaurant,
+  source = 'home_nearby',
+}: {
+  restaurant: Restaurant
+  source?: string
+}) {
+  const trackEvent = useEventsStore((s) => s.trackEvent)
+
+  const handleClick = () => {
+    trackEvent('restaurant_card_clicked', {
+      restaurantId: restaurant.id,
+      restaurantName: restaurant.name,
+      source,
+    })
+  }
+
   return (
     <Link
       to={`/restaurante/${restaurant.id}`}
+      onClick={handleClick}
       className="flex gap-3 bg-white rounded-2xl p-3 border border-gray-100 shadow-sm"
     >
       <img

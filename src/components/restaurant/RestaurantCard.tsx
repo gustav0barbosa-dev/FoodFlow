@@ -1,20 +1,33 @@
 import { Star, MapPin } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
+import { useEventsStore } from '@/store/eventsStore'
 import { cn } from '@/lib/utils'
 
 export function RestaurantCard({
   restaurant,
   size = 'lg',
+  source = 'home_featured',
 }: {
   restaurant: Restaurant
   size?: 'lg' | 'sm'
+  source?: string
 }) {
   const isLarge = size === 'lg'
+  const trackEvent = useEventsStore((s) => s.trackEvent)
+
+  const handleClick = () => {
+    trackEvent('restaurant_card_clicked', {
+      restaurantId: restaurant.id,
+      restaurantName: restaurant.name,
+      source,
+    })
+  }
 
   return (
     <Link
       to={`/restaurante/${restaurant.id}`}
+      onClick={handleClick}
       className={cn(
         'block bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100',
         isLarge ? 'w-60 shrink-0' : 'w-full'
