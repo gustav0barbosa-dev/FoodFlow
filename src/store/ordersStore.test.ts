@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AUTO_ADVANCE_STEP_MS,
+  deriveOrderStatus,
   nextOrderStatus,
   useOrdersStore,
   type NewOrderInput,
@@ -73,6 +75,68 @@ describe('ordersStore', () => {
   it('retorna undefined ao avançar um pedido inexistente', () => {
     expect(useOrdersStore.getState().advanceOrderStatus('inexistente')).toBeUndefined()
   })
+
+  it('avança automaticamente o status conforme o tempo decorrido', () => {
+    const createdAt = new Date('2026-11-08T12:00:00.000Z').getTime()
+
+    useOrdersStore.setState({
+      orders: [
+        {
+          id: 'auto-1',
+          restaurantNames: ['Sabor da Vila'],
+          items: [
+            { id: 'r1-m1', name: 'Feijoada Completa', price: 42.9, quantity: 1 },
+          ],
+          itemCount: 1,
+          subtotal: 42.9,
+          deliveryFee: 5.99,
+          total: 48.89,
+          status: 'Em preparo',
+          createdAt: new Date(createdAt).toISOString(),
+        },
+      ],
+    })
+
+    const { syncOrderStatuses } = useOrdersStore.getState()
+
+    expect(syncOrderStatuses(createdAt)).toBe(0)
+    expect(useOrdersStore.getState().orders[0].status).toBe('Em preparo')
+
+    expect(syncOrderStatuses(createdAt + AUTO_ADVANCE_STEP_MS)).toBe(1)
+    expect(useOrdersStore.getState().orders[0].status).toBe('Saiu para entrega')
+
+    expect(syncOrderStatuses(createdAt + AUTO_ADVANCE_STEP_MS * 2)).toBe(1)
+    expect(useOrdersStore.getState().orders[0].status).toBe('Entregue')
+
+    expect(syncOrderStatuses(createdAt + AUTO_ADVANCE_STEP_MS * 10)).toBe(0)
+  })
+
+  it('não regride um status avançado manualmente', () => {
+    const createdAt = new Date('2026-11-08T12:00:00.000Z').getTime()
+
+    useOrdersStore.setState({
+      orders: [
+        {
+          id: 'auto-2',
+          restaurantNames: ['Sabor da Vila'],
+          items: [
+            { id: 'r1-m1', name: 'Feijoada Completa', price: 42.9, quantity: 1 },
+          ],
+          itemCount: 1,
+          subtotal: 42.9,
+          deliveryFee: 5.99,
+          total: 48.89,
+          status: 'Entregue',
+          createdAt: new Date(createdAt).toISOString(),
+        },
+      ],
+    })
+
+    expect(
+      useOrdersStore.getState().syncOrderStatuses(createdAt + 1_000)
+    ).toBe(0)
+    expect(useOrdersStore.getState().orders[0].status).toBe('Entregue')
+  })
 })
 
 describe('nextOrderStatus', () => {
@@ -80,5 +144,30 @@ describe('nextOrderStatus', () => {
     expect(nextOrderStatus('Em preparo')).toBe('Saiu para entrega')
     expect(nextOrderStatus('Saiu para entrega')).toBe('Entregue')
     expect(nextOrderStatus('Entregue')).toBeNull()
+  })
+})
+
+describe('deriveOrderStatus', () => {
+  const createdAt = '2026-11-08T12:00:00.000Z'
+  const base = new Date(createdAt).getTime()
+
+  it('mapeia o tempo decorrido para o fluxo de status', () => {
+    expect(deriveOrderStatus(createdAt, base)).toBe('Em preparo')
+    expect(deriveOrderStatus(createdAt, base + AUTO_ADVANCE_STEP_MS - 1)).toBe(
+      'Em preparo'
+    )
+    expect(deriveOrderStatus(createdAt, base + AUTO_ADVANCE_STEP_MS)).toBe(
+      'Saiu para entrega'
+    )
+    expect(deriveOrderStatus(createdAt, base + AUTO_ADVANCE_STEP_MS * 2)).toBe(
+      'Entregue'
+    )
+    expect(deriveOrderStatus(createdAt, base + AUTO_ADVANCE_STEP_MS * 50)).toBe(
+      'Entregue'
+    )
+  })
+
+  it('mantém em preparo quando a data é inválida', () => {
+    expect(deriveOrderStatus('data-invalida', base)).toBe('Em preparo')
   })
 })

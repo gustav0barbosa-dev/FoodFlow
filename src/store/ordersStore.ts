@@ -15,6 +15,22 @@ export function nextOrderStatus(status: OrderStatus): OrderStatus | null {
   return ORDER_STATUS_FLOW[index + 1]
 }
 
+/** Mock time window used to simulate the delivery progression. */
+export const AUTO_ADVANCE_STEP_MS = 60_000
+
+export function deriveOrderStatus(
+  createdAt: string,
+  now: number = Date.now()
+): OrderStatus {
+  const created = new Date(createdAt).getTime()
+  if (Number.isNaN(created)) return 'Em preparo'
+
+  const steps = Math.floor(Math.max(now - created, 0) / AUTO_ADVANCE_STEP_MS)
+  const index = Math.min(steps, ORDER_STATUS_FLOW.length - 1)
+
+  return ORDER_STATUS_FLOW[index]
+}
+
 
 export interface OrderItem {
   id: string
@@ -76,6 +92,7 @@ interface OrdersState {
   orders: Order[]
   addOrder: (input: NewOrderInput) => Order
   advanceOrderStatus: (orderId: string) => Order | undefined
+  syncOrderStatuses: (now?: number) => number
 }
 
 export const useOrdersStore = create<OrdersState>()(
@@ -115,6 +132,25 @@ export const useOrdersStore = create<OrdersState>()(
           ),
         })
         return updated
+      },
+
+      syncOrderStatuses: (now = Date.now()) => {
+        let advancedCount = 0
+
+        const orders = get().orders.map((order) => {
+          const derived = deriveOrderStatus(order.createdAt, now)
+          const currentIndex = ORDER_STATUS_FLOW.indexOf(order.status)
+          const derivedIndex = ORDER_STATUS_FLOW.indexOf(derived)
+
+          if (derivedIndex <= currentIndex) return order
+
+          advancedCount += 1
+          return { ...order, status: derived }
+        })
+
+        if (advancedCount > 0) set({ orders })
+
+        return advancedCount
       },
     }),
     {

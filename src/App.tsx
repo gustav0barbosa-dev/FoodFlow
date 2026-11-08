@@ -11,6 +11,7 @@ import { Orders } from '@/pages/Orders'
 import { Profile } from '@/pages/Profile'
 import { Favorites } from '@/pages/Favorites'
 import { OrderDetail } from '@/pages/OrderDetail'
+import { useOrderAutoAdvance } from '@/hooks/useOrderAutoAdvance'
 
 function WithNav({ children }: { children: React.ReactNode }) {
   return (
@@ -22,6 +23,8 @@ function WithNav({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  useOrderAutoAdvance()
+
   return (
     <BrowserRouter>
       <MobileFrame>

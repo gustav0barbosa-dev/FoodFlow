@@ -2,6 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronLeft, MapPin, ShoppingBag } from 'lucide-react'
 import { toast } from 'sonner'
 import {
+  AUTO_ADVANCE_STEP_MS,
   ORDER_STATUS_FLOW,
   nextOrderStatus,
   useOrdersStore,
@@ -74,7 +75,9 @@ export function OrderDetail() {
         <section className="bg-white rounded-2xl p-4 border border-gray-100">
           <div className="flex items-start justify-between gap-2">
             <h2 className="font-semibold text-ink">{orderRestaurantLabel(order)}</h2>
-            <OrderStatusBadge status={order.status} />
+            <div aria-live="polite">
+              <OrderStatusBadge status={order.status} />
+            </div>
           </div>
 
           <ol className="mt-4 space-y-3" aria-label="Acompanhamento do pedido">
@@ -109,15 +112,21 @@ export function OrderDetail() {
           </ol>
 
           {nextStatus ? (
-            <button
-              type="button"
-              onClick={handleAdvance}
-              className="mt-4 w-full rounded-xl border border-primary/30 py-2.5 text-sm font-semibold text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-            >
-              {nextStatus === 'Saiu para entrega'
-                ? 'Confirmar saída para entrega'
-                : 'Confirmar entrega'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleAdvance}
+                className="mt-4 w-full rounded-xl border border-primary/30 py-2.5 text-sm font-semibold text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                {nextStatus === 'Saiu para entrega'
+                  ? 'Confirmar saída para entrega'
+                  : 'Confirmar entrega'}
+              </button>
+              <p className="mt-2 text-[11px] text-ink-soft text-center">
+                O status também avança automaticamente a cada{' '}
+                {AUTO_ADVANCE_STEP_MS / 60_000} min.
+              </p>
+            </>
           ) : (
             <p className="mt-4 text-xs text-ink-soft">
               Pedido concluído. Obrigado por pedir com a FoodFlow!
