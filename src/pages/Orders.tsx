@@ -1,5 +1,9 @@
 import { ShoppingBag } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
+import { restaurants } from '@/data/mockData'
 import { useOrdersStore, type Order, type OrderStatus } from '@/store/ordersStore'
+import { useCartStore } from '@/store/cartStore'
 import { cn, formatBRL } from '@/lib/utils'
 
 const statusStyles: Record<OrderStatus, string> = {
@@ -25,6 +29,37 @@ function restaurantLabel(order: Order) {
 
 export function Orders() {
   const orders = useOrdersStore((s) => s.orders)
+  const addItem = useCartStore((s) => s.addItem)
+  const navigate = useNavigate()
+
+  const handleReorder = (order: Order) => {
+    let addedCount = 0
+
+    for (const line of order.items) {
+      const restaurant = restaurants.find((r) =>
+        r.menu.some((menuItem) => menuItem.id === line.id)
+      )
+      const menuItem = restaurant?.menu.find((item) => item.id === line.id)
+      if (!restaurant || !menuItem) continue
+
+      for (let i = 0; i < line.quantity; i += 1) {
+        addItem(restaurant.id, restaurant.name, menuItem)
+      }
+      addedCount += line.quantity
+    }
+
+    if (addedCount === 0) {
+      toast.error('Não foi possível repetir este pedido')
+      return
+    }
+
+    toast.success(
+      addedCount === 1
+        ? '1 item adicionado à sacola'
+        : `${addedCount} itens adicionados à sacola`
+    )
+    navigate('/sacola')
+  }
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
@@ -79,13 +114,22 @@ export function Orders() {
                 {order.items.map((item) => `${item.quantity}x ${item.name}`).join(' · ')}
               </p>
 
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-xs text-ink-soft">
-                  {order.itemCount} {order.itemCount === 1 ? 'item' : 'itens'}
-                </span>
-                <span className="font-semibold text-primary">
-                  {formatBRL(order.total)}
-                </span>
+              <div className="mt-3 flex items-end justify-between gap-2">
+                <div>
+                  <span className="block text-xs text-ink-soft">
+                    {order.itemCount} {order.itemCount === 1 ? 'item' : 'itens'}
+                  </span>
+                  <span className="font-semibold text-primary">
+                    {formatBRL(order.total)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleReorder(order)}
+                  className="text-sm font-medium text-primary px-3 py-1.5 rounded-full border border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  Pedir novamente
+                </button>
               </div>
             </article>
           ))}
