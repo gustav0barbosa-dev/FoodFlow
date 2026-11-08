@@ -1,29 +1,73 @@
 import { ShoppingBag } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { useOrdersStore } from '@/store/ordersStore'
+import type { Order, OrderStatus } from '@/store/ordersStore'
 import { useOrderReorder } from '@/hooks/useOrderReorder'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
 import { EmptyState } from '@/components/common/EmptyState'
 import { formatOrderDate, orderRestaurantLabel } from '@/lib/orders'
 import { formatBRL } from '@/lib/utils'
 
+export type OrderStatusFilter = 'todos' | 'andamento' | 'entregues'
+
+const STATUS_FILTER_OPTIONS: {
+  value: OrderStatusFilter
+  label: string
+}[] = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'andamento', label: 'Em andamento' },
+  { value: 'entregues', label: 'Entregues' },
+]
+
+const IN_PROGRESS_STATUSES: OrderStatus[] = ['Em preparo', 'Saiu para entrega']
+
+function matchesStatusFilter(order: Order, filter: OrderStatusFilter): boolean {
+  if (filter === 'todos') return true
+  if (filter === 'entregues') return order.status === 'Entregue'
+  return IN_PROGRESS_STATUSES.includes(order.status)
+}
+
 export function Orders() {
   const navigate = useNavigate()
   const orders = useOrdersStore((s) => s.orders)
+  const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('todos')
   const reorder = useOrderReorder()
+
+  const filteredOrders = orders.filter((o) => matchesStatusFilter(o, statusFilter))
 
   return (
     <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
       <header className="sticky top-0 z-10 bg-white px-4 py-4 border-b border-gray-100">
         <h1 className="font-display font-bold text-lg text-ink">Pedidos</h1>
         <p className="text-xs text-ink-soft mt-0.5">
-          {orders.length === 0
+          {filteredOrders.length === 0
             ? 'Nenhum pedido ainda'
-            : `${orders.length} ${orders.length === 1 ? 'pedido' : 'pedidos'}`}
+            : `${filteredOrders.length} ${filteredOrders.length === 1 ? 'pedido' : 'pedidos'}`}
         </p>
       </header>
 
-      {orders.length === 0 ? (
+      <div className="px-4 mt-4 mb-2">
+        <label htmlFor="pedidos-status-filtro" className="text-xs text-ink-soft block mb-1">
+          Filtrar por status
+        </label>
+        <select
+          id="pedidos-status-filtro"
+          value={statusFilter}
+          onChange={(event) =>
+            setStatusFilter(event.target.value as OrderStatusFilter)
+          }
+          className="w-full max-w-xs rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          {STATUS_FILTER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {filteredOrders.length === 0 ? (
         <EmptyState
           icon={ShoppingBag}
           title="Você ainda não fez pedidos"
@@ -34,7 +78,7 @@ export function Orders() {
         />
       ) : (
         <div className="p-4 space-y-3">
-          {orders.map((order) => (
+          {filteredOrders.map((order) => (
             <article
               key={order.id}
               className="bg-white rounded-2xl p-4 border border-gray-100"
