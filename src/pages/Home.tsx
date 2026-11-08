@@ -32,6 +32,7 @@ export function Home() {
   const setCategory = useHomeFiltersStore((s) => s.setCategory)
   const resetFilters = useHomeFiltersStore((s) => s.resetFilters)
   const [query, setQuery] = useState('')
+  const [loadedCount, setLoadedCount] = useState(3)
   const nearbyRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -158,7 +159,7 @@ export function Home() {
             ? Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} variant="card" />
               ))
-            : nearby.map((r) => (
+            : nearby.slice(0, loadedCount).map((r) => (
                 <RestaurantCompactCard
                   key={r.id}
                   restaurant={r}
@@ -166,6 +167,15 @@ export function Home() {
                   query={query}
                 />
               ))}
+          {!loading && nearby.length > loadedCount && (
+            <button
+              type="button"
+              onClick={() => setLoadedCount((current) => current + 3)}
+              className="w-full py-2.5 rounded-xl border border-gray-200 bg-white text-sm font-medium text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Carregar mais · {nearby.length - loadedCount} restante{nearby.length - loadedCount !== 1 ? 's' : ''}
+            </button>
+          )}
           {!loading && nearby.length === 0 && (
             <p className="text-center text-ink-soft text-sm py-6">
               {category
