@@ -1,13 +1,15 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed } from 'lucide-react'
-import { restaurants } from '@/data/mockData'
+import { restaurants, currentUser } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
+import { UserReviewForm } from '@/components/restaurant/UserReviewForm'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { EmptyState } from '@/components/common/EmptyState'
 import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
+import { useReviewsStore } from '@/store/reviewsStore'
 import { formatBRL } from '@/lib/utils'
 
 export function RestaurantDetail() {
@@ -20,6 +22,12 @@ export function RestaurantDetail() {
   const lastTrackedId = useRef<string | null>(null)
 
   const restaurant = restaurants.find((r) => r.id === id)
+  const userReviews = useReviewsStore((s) => s.getReviewsForRestaurant(id ?? ''))
+  const hasReviewed = useReviewsStore((s) => s.hasReviewed(id ?? ''))
+  const addReview = useReviewsStore((s) => s.addReview)
+  const trackEvent = useEventsStore((s) => s.trackEvent)
+  const [userRating, setUserRating] = useState(0)
+  const [userComment, setUserComment] = useState('')
 
   useEffect(() => {
     if (!restaurant || lastTrackedId.current === restaurant.id) return
@@ -156,8 +164,50 @@ export function RestaurantDetail() {
                 restaurantName={restaurant.name}
               />
             ))}
-          {tab === 'reviews' &&
-            restaurant.reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
+          {tab === 'reviews' && (
+            <div className="space-y-4">
+              {!hasReviewed && (
+                <UserReviewForm
+                  restaurantId={id!}
+                  onReviewSubmitted={() => {
+                    setUserRating(0)
+                    setUserComment('')
+                  }}
+                />
+              )}
+              {hasReviewed && (
+                <div className="bg-green-50 border border-green-100 rounded-xl p-3">
+                  <p className="text-xs text-ink-soft mb-1">
+                    Você já avaliou este restaurante
+                  </p>
+                  <div className="flex items-center gap-1 text-sm text-ink">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Star
+                        key={star}
+                        size={14}
+                        className={star <= userRating ? 'text-star fill-star' : 'text-gray-300'}
+                      />
+                    ))}
+                    <span className="ml-1 text-[12px] text-ink-soft">
+                      {userRating} estrela{userRating !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <h3 className="font-semibold text-ink text-sm">
+                Avaliações ({restaurant.reviews.length + userReviews.length})
+              </h3>
+              {userReviews.map((r) => (
+                <ReviewCard key={r.id} review={{ ...r, restaurantId: undefined }} />
+              ))}
+              {restaurant.reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
+              {userReviews.length === 0 && restaurant.reviews.length === 0 && (
+                <p className="text-xs text-ink-soft text-center py-4">
+                  Sem avaliações ainda. Seja o primeiro!
+                </p>
+              )}
+            </div>
+          )}
           {tab === 'about' && (
             <p className="text-sm text-ink-soft py-3">
               {/* TODO: horários, formas de pagamento */}

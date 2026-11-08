@@ -10,6 +10,7 @@ export type EventType =
   | 'search_performed'
   | 'favorite_toggled'
   | 'order_status_updated'
+  | 'review_submitted'
 
 export type EventPayload = Record<string, string | number | string[]>
 
