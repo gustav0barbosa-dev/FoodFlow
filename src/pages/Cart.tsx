@@ -4,6 +4,7 @@ import { ChevronLeft, ShoppingBag } from 'lucide-react'
 import type { CartLine } from '@/types'
 import { restaurants } from '@/data/mockData'
 import { useCartStore } from '@/store/cartStore'
+import { useOrdersStore } from '@/store/ordersStore'
 import { formatBRL } from '@/lib/utils'
 import { CartLineItem } from '@/components/cart/CartLineItem'
 import { ConfirmOrderModal } from '@/components/cart/ConfirmOrderModal'
@@ -41,6 +42,7 @@ export function Cart() {
   const navigate = useNavigate()
   const lines = useCartStore((s) => s.lines)
   const clear = useCartStore((s) => s.clear)
+  const addOrder = useOrdersStore((s) => s.addOrder)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const groups = groupByRestaurant(lines)
@@ -59,6 +61,22 @@ export function Cart() {
   const handleGoHome = () => {
     setConfirmOpen(false)
     navigate('/home')
+  }
+
+  const handleConfirm = () => {
+    addOrder({
+      restaurantNames: groups.map((group) => group.restaurantName),
+      items: lines.map((line) => ({
+        id: line.item.id,
+        name: line.item.name,
+        price: line.item.price,
+        quantity: line.quantity,
+      })),
+      subtotal,
+      deliveryFee,
+      total,
+    })
+    clear()
   }
 
   return (
@@ -172,7 +190,7 @@ export function Cart() {
         subtotal={subtotal}
         deliveryFee={deliveryFee}
         total={total}
-        onConfirm={clear}
+        onConfirm={handleConfirm}
         onViewOrders={handleViewOrders}
         onGoHome={handleGoHome}
       />

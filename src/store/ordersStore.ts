@@ -1,0 +1,81 @@
+import { create } from 'zustand'
+
+export type OrderStatus = 'Em preparo' | 'Saiu para entrega' | 'Entregue'
+
+export interface OrderItem {
+  id: string
+  name: string
+  price: number
+  quantity: number
+}
+
+export interface Order {
+  id: string
+  restaurantNames: string[]
+  items: OrderItem[]
+  itemCount: number
+  subtotal: number
+  deliveryFee: number
+  total: number
+  status: OrderStatus
+  createdAt: string
+}
+
+export interface NewOrderInput {
+  restaurantNames: string[]
+  items: OrderItem[]
+  subtotal: number
+  deliveryFee: number
+  total: number
+}
+
+const seedOrders: Order[] = [
+  {
+    id: 'o1',
+    restaurantNames: ['Sabor da Vila'],
+    items: [{ id: 'r1-m1', name: 'Feijoada Completa', price: 42.9, quantity: 1 }],
+    itemCount: 1,
+    subtotal: 42.9,
+    deliveryFee: 5.99,
+    total: 48.89,
+    status: 'Entregue',
+    createdAt: '2026-10-28T19:30:00',
+  },
+  {
+    id: 'o2',
+    restaurantNames: ['Verde Vivo — Saudável'],
+    items: [{ id: 'r2-m1', name: 'Bowl Proteico', price: 32.5, quantity: 1 }],
+    itemCount: 1,
+    subtotal: 32.5,
+    deliveryFee: 0,
+    total: 32.5,
+    status: 'Entregue',
+    createdAt: '2026-10-20T12:15:00',
+  },
+]
+
+interface OrdersState {
+  orders: Order[]
+  addOrder: (input: NewOrderInput) => Order
+}
+
+export const useOrdersStore = create<OrdersState>((set, get) => ({
+  orders: [...seedOrders],
+
+  addOrder: (input) => {
+    const order: Order = {
+      id: `o${Date.now()}`,
+      restaurantNames: input.restaurantNames,
+      items: input.items,
+      itemCount: input.items.reduce((sum, item) => sum + item.quantity, 0),
+      subtotal: input.subtotal,
+      deliveryFee: input.deliveryFee,
+      total: input.total,
+      status: 'Em preparo',
+      createdAt: new Date().toISOString(),
+    }
+
+    set({ orders: [order, ...get().orders] })
+    return order
+  },
+}))
