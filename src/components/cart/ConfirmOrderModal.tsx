@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, X } from 'lucide-react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { formatBRL } from '@/lib/utils'
 
 type Phase = 'confirm' | 'success'
@@ -36,6 +37,7 @@ export function ConfirmOrderModal({
 }: ConfirmOrderModalProps) {
   const [phase, setPhase] = useState<Phase>('confirm')
   const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(open, dialogRef, phase)
 
   useEffect(() => {
     if (!open) return
@@ -47,10 +49,6 @@ export function ConfirmOrderModal({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
-
-  useEffect(() => {
-    if (open) dialogRef.current?.focus()
-  }, [open])
 
   const handleConfirm = () => {
     onConfirm()
