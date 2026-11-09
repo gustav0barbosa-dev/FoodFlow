@@ -9,6 +9,8 @@
     "migrate": "python -m alembic upgrade head",
     "batch-score": "python scripts/batch_score.py",
     "drift-detect": "python scripts/drift_detect.py",
+    "train-lora": "python scripts/train_lora.py",
+    "publish-lora": "python scripts/publish_lora.py",
     "build": "python -m compileall -q app scripts",
     "test": "python -m pytest"
   },

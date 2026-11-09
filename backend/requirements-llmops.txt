@@ -1,0 +1,10 @@
+# Dependências opcionais para LLMOps (fine-tuning LoRA + publicação Hugging Face)
+# Instale apenas quando for treinar/publicar o re-rankador:
+#   pip install -r requirements-llmops.txt
+
+transformers==4.46.0
+peft==0.14.0
+torch==2.5.1
+huggingface_hub==0.26.2
+safetensors==0.5.2
+sentencepiece==0.2.0

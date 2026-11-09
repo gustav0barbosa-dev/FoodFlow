@@ -48,6 +48,14 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `frontend/src/pages/RestaurantDetail.tsx`: container com largura limitada (700px), cardápio em grid 2 colunas (sm+)
   - `frontend/src/pages/Search.tsx`, `Favorites.tsx`, `Orders.tsx`, `Profile.tsx`, `OrderDetail.tsx`: containers com largura limitada em telas maiores
   - `frontend/src/pages/Onboarding.tsx`: largura limitada (sm:max-w-md)
+- LLMOps — re-ranking com LoRA e publicação Hugging Face:
+  - `backend/app/ml/reranker.py`: `LoRAReranker` com fallback determinístico quando `transformers`/`peft`/`torch` não estão instalados; integra ao pipeline `/recommendations` após o LightGBM
+  - `backend/scripts/train_lora.py`: fine-tuning LoRA sobre dataset sintético (usuário × restaurante × turno) gerado a partir dos pedidos do banco; gera artefato placeholder sem dependências de LLM
+  - `backend/scripts/publish_lora.py`: publicação do adapter no Hugging Face Hub com instruções manuais
+  - `backend/app/api/recommendations.py`: endpoints `POST /api/v1/recommendations/train-lora` e `POST /api/v1/recommendations/rerank`; re-ranking aplicado automaticamente nos scores do LightGBM
+  - `backend/requirements-llmops.txt`: dependências opcionais (transformers, peft, torch, huggingface_hub, safetensors)
+  - `backend/scripts/drift_detect.py` adicionado ao `package.json` como `drift-detect`
+- Testes novos: `tests/test_reranker.py` (fallback, normalização, bônus por turno, instância global)
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`
