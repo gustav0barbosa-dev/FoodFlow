@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from app.core.constants import APP_TIMEZONE
 from app.ml import recommender as recommender_module
 from app.ml.features import build_user_features
 from app.ml.recommender import Recommender
@@ -23,7 +24,7 @@ def make_restaurant(index: int) -> Restaurant:
 
 
 def make_order(user_id, restaurant_id, *, hour: int, days_ago: int) -> Order:
-    created_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).replace(
+    local = (datetime.now(APP_TIMEZONE) - timedelta(days=days_ago)).replace(
         hour=hour,
         minute=0,
         second=0,
@@ -35,7 +36,7 @@ def make_order(user_id, restaurant_id, *, hour: int, days_ago: int) -> Order:
         restaurant_id=restaurant_id,
         order_value=30.0 + hour,
         delivery_fee=5.0,
-        created_at=created_at,
+        created_at=local.astimezone(timezone.utc),
     )
 
 
@@ -75,6 +76,10 @@ def test_build_training_frame_has_positives_and_negatives() -> None:
     assert len(frame) > int(frame["clicked"].sum())
     assert "restaurant_rating" in frame.columns
     assert "tarde_avg_value" in frame.columns
+    # Cada turno presente no histórico vira um contexto de treino próprio.
+    assert int(frame[frame["clicked"] == 1]["is_tarde"].sum()) == 3
+    assert int(frame[frame["clicked"] == 1]["is_noite"].sum()) == 3
+    assert int(frame[frame["clicked"] == 1]["is_manha"].sum()) == 0
 
 
 def test_fit_and_evaluate_returns_metrics() -> None:
@@ -103,7 +108,7 @@ def test_recommender_roundtrip_and_prediction(tmp_path, monkeypatch) -> None:
     assert loaded.model is not None
 
     user_features = build_user_features(orders[:2], users[0])
-    scores = loaded.predict_scores(user_features, restaurants)
+    scores = loaded.predict_scores(user_features, restaurants, "tarde")
 
     assert set(scores) == {str(restaurant.id) for restaurant in restaurants}
     assert all(0.0 <= score <= 1.0 for score in scores.values())

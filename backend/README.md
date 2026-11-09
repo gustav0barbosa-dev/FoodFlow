@@ -36,9 +36,29 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
    - sem histórico (cold start): fallback por popularidade (nota + volume de avaliações).
 4. Normaliza os scores para `[0, 1]`, grava no Redis com TTL de 24h e ordena os candidatos.
 
-As features seguem a documentação: ticket médio, frete médio, contagem por turno e **medoide** aproximado por moda ponderada pela recência. O treino usa amostragem `1 positivo : 3 negativos` e remove o restaurante-alvo do histórico para reduzir vazamento.
+As features seguem a documentação: ticket médio, frete médio, contagem por turno e **medoide** aproximado por moda ponderada pela recência. O turno solicitado entra como one-hot (`is_manha`, `is_tarde`, ...), então o modelo aprende rankings diferentes por período. O treino usa amostragem `1 positivo : 3 negativos` por turno e remove o restaurante-alvo do histórico para reduzir vazamento.
 
-> O batch scoring diário descrito na documentação ainda é feito sob demanda (lazy) e cacheado no Redis. A troca por um job agendado é o próximo passo de MLOps.
+## Batch scoring
+
+O job `scripts/batch_score.py` calcula os scores de todos os usuários para os quatro turnos e grava em `reco:scores:{user_id}:{turno}` com TTL de 24h. A API continua funcionando sem o job (cache miss → modelo/popularidade), mas o batch evita latência de inferência na primeira requisição após a invalidação.
+
+```bash
+cd backend
+python scripts/batch_score.py                    # todos os usuários e turnos
+python scripts/batch_score.py --turno tarde \
+  --turno noite                                  # apenas alguns turnos
+python scripts/batch_score.py --user-id <uuid> --dry-run
+```
+
+O script carrega `models/recommender.joblib`; se o modelo não existir, grava o fallback por popularidade. O resumo informa quantas combinações usaram modelo/popularidade e quantas foram gravadas no Redis.
+
+Agendamento:
+
+- **Docker Compose:** `docker compose --profile batch run --rm batch-scorer`;
+- **Windows:** Task Scheduler diário chamando `.venv\Scripts\python.exe scripts\batch_score.py`;
+- **Linux:** cron, por exemplo `0 3 * * * cd /app/backend && .venv/bin/python scripts/batch_score.py`.
+
+Treinar novamente (`POST /api/v1/recommendations/train`) invalida todos os scores; rode o batch em seguida para repopular o cache.
 
 ## Como rodar
 
@@ -85,7 +105,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, geração do dataset de treino, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 
@@ -116,9 +136,11 @@ backend/
 │   └── ml/
 │       ├── features.py          # features compartilhadas treino/serving
 │       ├── recommender.py       # load/save + predict + fallback
+│       ├── batch.py             # scoring em lote por usuário/turno
 │       └── train.py             # dataset, treino e métricas
 ├── models/                      # artefatos .joblib (gitignored)
 ├── scripts/
-│   └── init_db.py
+│   ├── init_db.py
+│   └── batch_score.py           # CLI do batch scoring (cron/Task Scheduler)
 └── tests/
 ```

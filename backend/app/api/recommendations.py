@@ -7,7 +7,7 @@ from app import crud
 from app.cache.redis_client import clear_scores, get_scores, set_scores
 from app.core.constants import Turno
 from app.database import get_db
-from app.ml.features import build_user_features
+from app.ml.features import build_user_features, has_turno_history
 from app.ml.recommender import popularity_scores, recommender
 from app.ml.train import train
 from app.schemas import RecommendationOut, RestaurantSearchParams
@@ -39,11 +39,16 @@ async def recommendations(
         user = await crud.get_user(session, user_id)
         orders = await crud.get_user_orders(session, user_id) if user else []
 
-        if recommender.model is not None and orders and user is not None:
+        if (
+            recommender.model is not None
+            and orders
+            and user is not None
+            and has_turno_history(orders, turno)
+        ):
             user_features = build_user_features(orders, user)
-            scores = recommender.predict_scores(user_features, nearby)
+            scores = recommender.predict_scores(user_features, nearby, turno)
         else:
-            # Cold start: popularidade como fallback documentado.
+            # Cold start (sem histórico no turno): popularidade documentada.
             scores = popularity_scores(nearby)
 
         await set_scores(str(user_id), turno, scores)

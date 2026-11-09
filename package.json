@@ -14,6 +14,7 @@
     "test:api": "npm --prefix backend test",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "db:init": "cd backend && python scripts/init_db.py"
+    "db:init": "cd backend && python scripts/init_db.py",
+    "batch:score": "npm --prefix backend run batch-score"
   }
 }

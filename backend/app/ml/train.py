@@ -10,8 +10,13 @@ from sklearn.model_selection import train_test_split
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import TURNOS, Turno
 from app.database import AsyncSessionLocal
-from app.ml.features import build_candidate_features, build_user_features
+from app.ml.features import (
+    build_candidate_features,
+    build_user_features,
+    order_turno,
+)
 from app.ml.recommender import recommender
 from app.models import Order, Restaurant, User
 
@@ -26,10 +31,11 @@ def build_training_frame(
     negatives_per_positive: int = NEGATIVES_PER_POSITIVE,
     seed: int = RANDOM_SEED,
 ) -> pd.DataFrame:
-    """Gera amostras (usuário, restaurante) com 1 positivo : N negativos.
+    """Gera amostras (usuário, restaurante, turno) com 1 positivo : N negativos.
 
-    Para evitar vazamento, as features de um positivo são calculadas sem os
-    pedidos daquele restaurante (leave-one-restaurant-out).
+    Cada turno vira um contexto independente. Para evitar vazamento, as
+    features de um positivo são calculadas sem os pedidos daquele restaurante
+    (leave-one-restaurant-out).
     """
     if not users or not restaurants:
         return pd.DataFrame()
@@ -43,39 +49,57 @@ def build_training_frame(
         if not user_orders:
             continue
 
-        positive_ids = sorted(
-            {
-                order.restaurant_id
-                for order in user_orders
-                if order.restaurant_id in restaurant_by_id
-            }
-        )
-        if not positive_ids:
-            continue
+        orders_by_turno: dict[Turno, list[Order]] = {turno: [] for turno in TURNOS}
+        for order in user_orders:
+            orders_by_turno[order_turno(order)].append(order)
 
-        for restaurant_id in positive_ids:
-            history_without_target = [
-                order for order in user_orders if order.restaurant_id != restaurant_id
+        for turno in TURNOS:
+            turno_orders = orders_by_turno[turno]
+            if not turno_orders:
+                continue
+
+            positive_ids = sorted(
+                {
+                    order.restaurant_id
+                    for order in turno_orders
+                    if order.restaurant_id in restaurant_by_id
+                }
+            )
+            if not positive_ids:
+                continue
+
+            for restaurant_id in positive_ids:
+                history_without_target = [
+                    order
+                    for order in user_orders
+                    if order.restaurant_id != restaurant_id
+                ]
+                features = build_user_features(history_without_target, user)
+                row = build_candidate_features(
+                    features,
+                    restaurant_by_id[restaurant_id],
+                    turno,
+                )
+                row["clicked"] = 1
+                rows.append(row)
+
+            negative_candidates = [
+                restaurant
+                for restaurant in restaurants
+                if restaurant.id not in set(positive_ids)
             ]
-            features = build_user_features(history_without_target, user)
-            row = build_candidate_features(features, restaurant_by_id[restaurant_id])
-            row["clicked"] = 1
-            rows.append(row)
+            sample_size = min(
+                len(negative_candidates),
+                max(1, len(positive_ids) * negatives_per_positive),
+            )
+            if sample_size == 0:
+                continue
 
-        negative_candidates = [
-            restaurant
-            for restaurant in restaurants
-            if restaurant.id not in set(positive_ids)
-        ]
-        sample_size = min(
-            len(negative_candidates),
-            max(1, len(positive_ids) * negatives_per_positive),
-        )
-        for restaurant in rng.sample(negative_candidates, sample_size):
             features = build_user_features(user_orders, user)
-            row = build_candidate_features(features, restaurant)
-            row["clicked"] = 0
-            rows.append(row)
+            for restaurant in rng.sample(negative_candidates, sample_size):
+                row = build_candidate_features(features, restaurant, turno)
+                row["clicked"] = 0
+                rows.append(row)
 
     return pd.DataFrame(rows)
 

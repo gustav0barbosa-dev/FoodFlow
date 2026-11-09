@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import numpy as np
+
 from app.ml.recommender import (
     Recommender,
     normalize_scores,
@@ -68,3 +70,26 @@ def test_predict_scores_without_model_returns_neutral_scores() -> None:
     scores = recommender.predict_scores({}, restaurants)
 
     assert scores == {str(r.id): 0.5 for r in restaurants}
+
+
+class _FakeModel:
+    """Captura o DataFrame para validar o contexto de turno enviado ao modelo."""
+
+    def __init__(self) -> None:
+        self.frame = None
+
+    def predict_proba(self, frame):
+        self.frame = frame
+        return np.tile([0.2, 0.8], (len(frame), 1))
+
+
+def test_predict_scores_uses_requested_turno() -> None:
+    restaurants = [make_restaurant(rating=4.0, reviews=10)]
+    recommender = Recommender()
+    recommender.model = _FakeModel()
+
+    recommender.predict_scores({}, restaurants, "noite")
+
+    assert recommender.model.frame is not None
+    assert recommender.model.frame["is_noite"].iloc[0] == 1.0
+    assert recommender.model.frame["is_manha"].iloc[0] == 0.0

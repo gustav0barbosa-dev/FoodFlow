@@ -5,9 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import crud
+from app.api import recommendations as recommendations_api
 from app.database import get_db
 from app.main import app
-from app.models import Restaurant, Review
+from app.models import Restaurant, Review, User
 
 
 @pytest.fixture(autouse=True)
@@ -126,3 +127,62 @@ def test_search_requires_coordinates() -> None:
         response = client.get("/api/v1/restaurants/search")
 
     assert response.status_code == 422
+
+
+def test_recommendations_without_turno_history_uses_popularity(monkeypatch) -> None:
+    _use_fake_db()
+    restaurant = Restaurant(
+        id=uuid4(),
+        name="Sabor da Vila",
+        address="Rua Teste, 1",
+        categories=["Brasileira"],
+        average_rating=4.8,
+        review_count=120,
+        delivery_fee=5.0,
+        delivery_time_min=20,
+        delivery_time_max=30,
+    )
+    user = User(
+        id=uuid4(),
+        name="Ana Souza",
+        email="ana@test.dev",
+        dietary_preferences=[],
+    )
+    writes: list[str] = []
+
+    async def fake_search(*_args, **_kwargs):
+        return [restaurant]
+
+    async def fake_get_user(*_args, **_kwargs):
+        return user
+
+    async def fake_get_orders(*_args, **_kwargs):
+        return []
+
+    async def fake_get_scores(*_args, **_kwargs):
+        return None
+
+    async def fake_set_scores(user_id, turno, scores):
+        writes.append(turno)
+        return True
+
+    monkeypatch.setattr(crud, "search_restaurants", fake_search)
+    monkeypatch.setattr(crud, "get_user", fake_get_user)
+    monkeypatch.setattr(crud, "get_user_orders", fake_get_orders)
+    monkeypatch.setattr(recommendations_api, "get_scores", fake_get_scores)
+    monkeypatch.setattr(recommendations_api, "set_scores", fake_set_scores)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/recommendations",
+            params={
+                "user_id": str(user.id),
+                "lat": -23.5325,
+                "lon": -46.7939,
+                "turno": "noite",
+            },
+        )
+
+    assert response.status_code == 200
+    assert writes == ["noite"]
+    assert response.json()[0]["score"] == 1.0

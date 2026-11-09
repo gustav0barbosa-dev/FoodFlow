@@ -38,6 +38,20 @@ def _recency_weight(created_at: datetime, now: datetime) -> float:
     return max(0.5 ** (age_days / 30.0), 0.01)
 
 
+def order_turno(order: Order) -> Turno:
+    """Turno local (fuso do app) em que o pedido foi feito."""
+    return turno_da_hora(_local_hour(order.created_at))
+
+
+def has_turno_history(orders: list[Order], turno: Turno) -> bool:
+    """Indica se o usuário já pediu naquele turno.
+
+    A API só usa o modelo quando há sinal no turno solicitado; caso contrário
+    cai no fallback por popularidade (cold start contextual).
+    """
+    return any(order_turno(order) == turno for order in orders)
+
+
 def build_user_features(
     orders: list[Order],
     user: User | None,
@@ -68,7 +82,7 @@ def build_user_features(
     frame = pd.DataFrame(
         [
             {
-                "turno": turno_da_hora(_local_hour(order.created_at)),
+                "turno": order_turno(order),
                 "order_value": float(order.order_value or 0.0),
                 "delivery_fee": float(order.delivery_fee or 0.0),
                 "restaurant_id": str(order.restaurant_id),
@@ -96,8 +110,9 @@ def build_user_features(
 def build_candidate_features(
     user_features: dict[str, Any],
     restaurant: Restaurant,
+    turno: Turno = "tarde",
 ) -> dict[str, float]:
-    """Monta a linha (usuário, restaurante) usada tanto no treino quanto no serving."""
+    """Monta a linha (usuário, restaurante, turno) usada no treino e no serving."""
     row: dict[str, float] = {
         "total_orders": float(user_features.get("total_orders", 0.0)),
         "has_dietary_preferences": float(
@@ -111,14 +126,23 @@ def build_candidate_features(
         ),
     }
 
-    for turno in TURNOS:
-        row[f"{turno}_avg_value"] = float(
-            user_features.get(f"{turno}_avg_value", 0.0)
+    # One-hot do turno solicitado: permite ao modelo aplicar o contexto certo
+    # em vez de aprender um ranking único para todos os horários.
+    for candidate_turno in TURNOS:
+        row[f"is_{candidate_turno}"] = 1.0 if candidate_turno == turno else 0.0
+
+    for candidate_turno in TURNOS:
+        row[f"{candidate_turno}_avg_value"] = float(
+            user_features.get(f"{candidate_turno}_avg_value", 0.0)
         )
-        row[f"{turno}_avg_fee"] = float(user_features.get(f"{turno}_avg_fee", 0.0))
-        row[f"{turno}_count"] = float(user_features.get(f"{turno}_count", 0.0))
-        top_restaurant = user_features.get(f"{turno}_top_restaurant")
-        row[f"{turno}_is_top_restaurant"] = (
+        row[f"{candidate_turno}_avg_fee"] = float(
+            user_features.get(f"{candidate_turno}_avg_fee", 0.0)
+        )
+        row[f"{candidate_turno}_count"] = float(
+            user_features.get(f"{candidate_turno}_count", 0.0)
+        )
+        top_restaurant = user_features.get(f"{candidate_turno}_top_restaurant")
+        row[f"{candidate_turno}_is_top_restaurant"] = (
             1.0 if top_restaurant and str(top_restaurant) == str(restaurant.id) else 0.0
         )
 

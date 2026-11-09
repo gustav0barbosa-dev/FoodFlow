@@ -9,6 +9,7 @@ import joblib
 import pandas as pd
 from lightgbm import LGBMClassifier
 
+from app.core.constants import Turno
 from app.ml.features import build_candidate_features
 from app.models import Restaurant
 
@@ -111,12 +112,13 @@ class Recommender:
         self,
         user_features: dict[str, Any],
         restaurants: list[Restaurant],
+        turno: Turno = "tarde",
     ) -> dict[str, float]:
         if self.model is None or not restaurants:
             return {str(restaurant.id): 0.5 for restaurant in restaurants}
 
         rows = [
-            build_candidate_features(user_features, restaurant)
+            build_candidate_features(user_features, restaurant, turno)
             for restaurant in restaurants
         ]
         frame = pd.DataFrame(rows)

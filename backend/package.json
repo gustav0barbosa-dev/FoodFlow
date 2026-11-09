@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
     "init-db": "python scripts/init_db.py",
+    "batch-score": "python scripts/batch_score.py",
     "build": "python -m compileall -q app scripts",
     "test": "python -m pytest"
   },

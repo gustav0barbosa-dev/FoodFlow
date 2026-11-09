@@ -5,6 +5,7 @@ from app.core.constants import APP_TIMEZONE
 from app.ml.features import (
     build_candidate_features,
     build_user_features,
+    has_turno_history,
     turno_da_hora,
 )
 from app.models import Order, Restaurant, User
@@ -109,7 +110,7 @@ def test_build_candidate_features_marks_top_restaurant() -> None:
         "tarde_count": 3.0,
     }
 
-    row = build_candidate_features(user_features, restaurant)
+    row = build_candidate_features(user_features, restaurant, "tarde")
 
     assert row["restaurant_rating"] == 4.8
     assert row["restaurant_review_count"] == 250.0
@@ -117,3 +118,18 @@ def test_build_candidate_features_marks_top_restaurant() -> None:
     assert row["tarde_is_top_restaurant"] == 1.0
     assert row["manha_is_top_restaurant"] == 0.0
     assert row["tarde_avg_value"] == 40.0
+    assert row["is_tarde"] == 1.0
+    assert row["is_manha"] == 0.0
+    assert row["is_noite"] == 0.0
+    assert row["is_madrugada"] == 0.0
+
+
+def test_has_turno_history_uses_local_timezone() -> None:
+    morning = make_order(uuid4(), hour=9, days_ago=1, value=20.0, fee=5.0)
+    night = make_order(uuid4(), hour=20, days_ago=1, value=30.0, fee=5.0)
+    orders = [morning, night]
+
+    assert has_turno_history(orders, "manha") is True
+    assert has_turno_history(orders, "noite") is True
+    assert has_turno_history(orders, "tarde") is False
+    assert has_turno_history([], "tarde") is False
