@@ -19,6 +19,13 @@ RECOMMENDATION_METRIC_KEYS: dict[str, str] = {
     "cache_misses": "metrics:reco:cache_misses",
     "model_scores": "metrics:reco:model_scores",
     "popularity_scores": "metrics:reco:popularity_scores",
+    "distance_scores": "metrics:reco:distance_scores",
+}
+
+# Chaves de métrica por grupo do experimento A/B.
+AB_TEST_METRIC_KEYS: dict[str, str] = {
+    "personalized_requests": "metrics:ab:personalized:requests",
+    "distance_requests": "metrics:ab:distance:requests",
 }
 
 
@@ -129,6 +136,53 @@ async def get_recommendation_metrics() -> dict[str, Any]:
     requests = metrics["requests"]
     hit_rate = round(metrics["cache_hits"] / requests, 4) if requests else 0.0
     return {"redis_available": True, "cache_hit_rate": hit_rate, **metrics}
+
+
+async def increment_ab_test_metrics(group: str) -> bool:
+    """Incrementa o contador de requisições de um grupo do experimento A/B."""
+    key = AB_TEST_METRIC_KEYS.get(group)
+    if not key:
+        return False
+
+    try:
+        client = await get_redis()
+        await client.incr(key)
+        return True
+    except RedisError as exc:
+        logger.warning("Falha ao incrementar métrica do A/B test (%s): %s", group, exc)
+        return False
+
+
+async def get_ab_test_metrics() -> dict[str, Any]:
+    """Lê os contadores acumulados de cada grupo do experimento A/B."""
+    metrics: dict[str, int] = {name: 0 for name in AB_TEST_METRIC_KEYS}
+
+    try:
+        client = await get_redis()
+        values = await client.mget(list(AB_TEST_METRIC_KEYS.values()))
+    except RedisError as exc:
+        logger.warning("Falha ao ler métricas do A/B test: %s", exc)
+        return {"redis_available": False, **metrics}
+
+    for name, value in zip(AB_TEST_METRIC_KEYS, values, strict=True):
+        metrics[name] = int(value or 0)
+
+    total = metrics["personalized_requests"] + metrics["distance_requests"]
+    personalized_share = (
+        round(metrics["personalized_requests"] / total, 4) if total else 0.0
+    )
+    distance_share = (
+        round(metrics["distance_requests"] / total, 4) if total else 0.0
+    )
+
+    return {
+        "redis_available": True,
+        "total_requests": total,
+        "personalized_requests": metrics["personalized_requests"],
+        "distance_requests": metrics["distance_requests"],
+        "personalized_share": personalized_share,
+        "distance_share": distance_share,
+    }
 
 
 async def ping_redis() -> bool:

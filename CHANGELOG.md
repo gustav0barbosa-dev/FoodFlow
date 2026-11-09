@@ -48,6 +48,49 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `frontend/src/pages/RestaurantDetail.tsx`: container com largura limitada (700px), cardápio em grid 2 colunas (sm+)
   - `frontend/src/pages/Search.tsx`, `Favorites.tsx`, `Orders.tsx`, `Profile.tsx`, `OrderDetail.tsx`: containers com largura limitada em telas maiores
   - `frontend/src/pages/Onboarding.tsx`: largura limitada (sm:max-w-md)
+- LLMOps — re-ranking com LoRA e publicação Hugging Face:
+  - `backend/app/ml/reranker.py`: `LoRAReranker` com fallback determinístico quando `transformers`/`peft`/`torch` não estão instalados; integra ao pipeline `/recommendations` após o LightGBM
+  - `backend/scripts/train_lora.py`: fine-tuning LoRA sobre dataset sintético (usuário × restaurante × turno) gerado a partir dos pedidos do banco; gera artefato placeholder sem dependências de LLM
+  - `backend/scripts/publish_lora.py`: publicação do adapter no Hugging Face Hub com instruções manuais
+  - `backend/app/api/recommendations.py`: endpoints `POST /api/v1/recommendations/train-lora` e `POST /api/v1/recommendations/rerank`; re-ranking aplicado automaticamente nos scores do LightGBM
+  - `backend/requirements-llmops.txt`: dependências opcionais (transformers, peft, torch, huggingface_hub, safetensors)
+  - `backend/scripts/drift_detect.py` adicionado ao `package.json` como `drift-detect`
+- Testes novos: `tests/test_reranker.py` (fallback, normalização, bônus por turno, instância global)
+- Deploy de produção:
+  - `backend/Dockerfile.prod`: imagem otimizada para produção (sem `--reload`, código empacotado)
+  - `docker-compose.prod.yml`: compose de produção (usa `Dockerfile.prod`, variáveis de ambiente via `.env`)
+  - `backend/.env.example`: variáveis de ambiente do backend (`DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`)
+  - `frontend/.env.example`: documentação de `VITE_API_URL` para desenvolvimento e produção
+  - Healthcheck do backend no `docker-compose.yml` (endpoint `/ready`)
+  - Endpoint `/api/v1/metrics` no formato Prometheus para scraping
+- Experimento A/B de recomendações:
+  - `backend/app/api/recommendations.py`: parâmetro `experiment` (`personalized`/`distance`) no endpoint `/recommendations`; atribuição determinística por hash do `user_id` quando omitido; métricas separadas por grupo (`metrics:ab:personalized:requests`, `metrics:ab:distance:requests`)
+  - `backend/app/api/experiment.py`: endpoint `GET /api/v1/experiment/ab-test` com resultados acumulados (total, por grupo, share)
+  - `backend/app/cache/redis_client.py`: funções `increment_ab_test_metrics` e `get_ab_test_metrics`
+  - `frontend/src/lib/config.ts`: tipo `ABGroup`, `DEFAULT_AB_GROUP`, `getABGroup()`, variável `VITE_AB_GROUP`
+  - `frontend/src/lib/api.ts`: parâmetro `experiment` em `getRecommendations`; função `getABTestResults`
+  - `frontend/src/hooks/useRecommendations.ts`: passa o grupo A/B para a API; retorna `experimentGroup`
+  - `frontend/src/pages/Home.tsx`: exibe o grupo A/B ativo na seção de recomendados
+  - `frontend/src/pages/Profile.tsx`: seletor de grupo A/B (padrão/personalizado/distância) e painel de resultados acumulados
+  - `frontend/.env.example`: variável `VITE_AB_GROUP`
+- Aplicativo móvel React Native + Expo (`mobile/`):
+  - `mobile/app.json`: configuração do app (nome FoodFlow, ícone, splash, plugins expo-router/expo-localization/expo-font)
+  - `mobile/src/app/index.tsx`: tela de Onboarding com geolocalização via `expo-location`
+  - `mobile/src/app/(tabs)/_layout.tsx`: navegação por abas com Expo Router (Início, Buscar, Pedidos, Perfil)
+  - `mobile/src/app/(tabs)/index.tsx`: tela Home com recomendados, "Perto de você", busca e carrinho
+  - `mobile/src/app/(tabs)/buscar.tsx`: tela Buscar com buscas recentes e resultados
+  - `mobile/src/app/(tabs)/pedidos.tsx`: tela Pedidos com histórico
+  - `mobile/src/app/(tabs)/perfil.tsx`: tela Perfil com preferências e experimento A/B
+  - `mobile/src/app/restaurante/[id].tsx`: tela Detalhe do Restaurante com cardápio e informações
+  - `mobile/src/app/sacola.tsx`: tela Sacola com itens, grupos por restaurante e finalização
+  - `mobile/src/app/favoritos.tsx`: tela Favoritos (via tab)
+  - `mobile/src/lib/api.ts`: cliente HTTP tipado com todos os endpoints da API
+  - `mobile/src/lib/config.ts`: configuração com variáveis `EXPO_PUBLIC_*`
+  - `mobile/src/lib/catalog.ts`: mapeamento API → tipos do frontend
+  - `mobile/src/lib/dietary.ts`, `mobile/src/lib/search.ts`, `mobile/src/lib/format.ts`, `mobile/src/lib/events.ts`, `mobile/src/lib/utils.ts`: utilitários
+  - `mobile/src/store/`: Zustand stores (catalog, cart, favorites, location, orders, preferences, reviews, events, address)
+  - `mobile/src/data/mockData.ts`: 12 restaurantes com cardápio e avaliações
+  - `mobile/src/types/index.ts`: tipos TypeScript compartilhados
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

@@ -76,10 +76,12 @@ describe('api client', () => {
     expect(url).toContain('/reviews')
     expect(init?.method).toBe('POST')
     const rawHeaders = init?.headers
-    const headersObj = rawHeaders && !Array.isArray(rawHeaders) && !(rawHeaders instanceof Headers)
-      ? (rawHeaders as Record<string, string>)
-      : {}
-    const idempotencyKey = headersObj['Idempotency-Key']
+    let idempotencyKey: string | undefined
+    if (rawHeaders && typeof (rawHeaders as Headers).get === 'function') {
+      idempotencyKey = (rawHeaders as Headers).get('Idempotency-Key') ?? undefined
+    } else if (rawHeaders && !Array.isArray(rawHeaders)) {
+      idempotencyKey = (rawHeaders as Record<string, string>)['Idempotency-Key']
+    }
     expect(idempotencyKey).toBe('idem-1')
     const body = JSON.parse(init?.body as string)
     expect(body.restaurant_id).toBe('r1')

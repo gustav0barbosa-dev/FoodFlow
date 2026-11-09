@@ -375,6 +375,36 @@ def test_recommendation_metrics_endpoint(monkeypatch) -> None:
     assert response.json()["redis_available"] is True
 
 
+def test_ab_test_endpoint(monkeypatch) -> None:
+    from app.api import experiment as experiment_api
+
+    async def fake_ab_metrics():
+        return {
+            "redis_available": True,
+            "total_requests": 100,
+            "personalized_requests": 52,
+            "distance_requests": 48,
+            "personalized_share": 0.52,
+            "distance_share": 0.48,
+        }
+
+    monkeypatch.setattr(
+        experiment_api, "get_ab_test_metrics", fake_ab_metrics
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/experiment/ab-test")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["redis_available"] is True
+    assert body["total_requests"] == 100
+    assert body["personalized_requests"] == 52
+    assert body["distance_requests"] == 48
+    assert body["personalized_share"] == 0.52
+    assert body["distance_share"] == 0.48
+
+
 def test_drift_endpoint(monkeypatch) -> None:
     async def fake_report():
         return {

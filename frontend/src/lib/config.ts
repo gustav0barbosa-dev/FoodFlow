@@ -2,6 +2,8 @@
 
 export type Turno = 'manha' | 'tarde' | 'noite' | 'madrugada'
 
+export type ABGroup = 'personalized' | 'distance' | ''
+
 function readNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -30,6 +32,10 @@ export const DEFAULT_LOCATION_LABEL =
 
 export const API_USER_ID = DEFAULT_USER_ID
 
+/** Grupo do experimento A/B (vazio = atribuição determinística pelo backend). */
+export const DEFAULT_AB_GROUP =
+  (import.meta.env.VITE_AB_GROUP as ABGroup) ?? ''
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -48,4 +54,9 @@ export function getCurrentTurno(date: Date = new Date()): Turno {
   if (hour >= 12 && hour < 18) return 'tarde'
   if (hour >= 18) return 'noite'
   return 'madrugada'
+}
+
+/** Retorna o grupo do experimento A/B configurado via env (ou vazio para deixar o backend decidir). */
+export function getABGroup(): ABGroup {
+  return DEFAULT_AB_GROUP
 }

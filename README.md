@@ -81,7 +81,7 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
 - ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **74 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API e monitoramento de drift.
+- ✅ **84 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API, monitoramento de drift, re-rankador LoRA e experimento A/B.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -280,6 +280,27 @@ Ou use o Python do venv diretamente:
 
 A API estará em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
+#### Deploy de produção (Docker Compose)
+
+Para rodar em produção, use o compose de produção junto com o base:
+
+```bash
+# Na raiz do projeto
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Defina as variáveis de ambiente antes de subir (ou crie um `.env` na raiz):
+
+```bash
+DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow
+REDIS_URL=redis://redis:6379/0
+CORS_ORIGINS=https://app.seudominio.com,https://www.seudominio.com
+```
+
+O build de produção usa `backend/Dockerfile.prod` (sem `--reload`, com o código empacotado na imagem) e aplica `init_db.py` (migrações + seed) na inicialização.
+
+O endpoint `/ready` pode ser usado como readiness proxy e `/api/v1/metrics` expõe métricas no formato Prometheus para scraping.
+
 4. **Rodar os testes.** Os testes não precisam de PostgreSQL nem Redis:
 
 ```powershell
@@ -288,7 +309,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Resultado esperado: `52 passed`.
+Resultado esperado: `83 passed`.
 
 5. **Verificação rápida da API.** Com a API rodando:
 
@@ -412,16 +433,17 @@ Frontend recebe lista ordenada por score
 - [x] Integrar o frontend à API (substituir mocks por chamadas HTTP)
 - [x] Endpoints `PUT` e `DELETE` de `/api/v1/reviews/{id}` para edição e remoção de avaliações
 - [x] Monitoramento de drift do recomendador (PSI por feature, endpoint `/api/v1/drift`, script `drift_detect.py`)
+- [x] LLMOps: re-ranking com LoRA (`backend/app/ml/reranker.py`), script de treino (`scripts/train_lora.py`), script de publicação Hugging Face (`scripts/publish_lora.py`), endpoints `/api/v1/recommendations/train-lora` e `/api/v1/recommendations/rerank`, requirements opcionais (`requirements-llmops.txt`)
+- [x] A/B test: feed personalizado vs. feed por distância (parâmetro `experiment` em `/recommendations`, endpoint `/api/v1/experiment/ab-test`, seletor no Perfil)
 
 ### 🔄 Em andamento / Próximos passos
-- [ ] Longo prazo (LLMOps e portfólio)
+- [ ] Deploy do backend (AWS/GCP) com monitoramento
 
 ### 🎯 Longo prazo (LLMOps e portfólio)
 - [ ] Fine-tuning **LoRA** de LLM pequeno para re-ranking
 - [ ] Publicação do adapter no **Hugging Face Hub**
 - [ ] Deploy do backend (AWS/GCP) com monitoramento
-- [ ] A/B test: feed personalizado vs. feed por distância
-- [ ] Migração do protótipo para **React Native + Expo** (app nativo)
+- [x] Migração do protótipo para **React Native + Expo** (app nativo)
 - [ ] Artigo técnico publicado (Medium/dev.to) explicando a arquitetura
 
 ---

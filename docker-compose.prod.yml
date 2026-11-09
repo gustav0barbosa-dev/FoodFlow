@@ -1,0 +1,24 @@
+# Docker Compose de produção do FoodFlow.
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Variáveis de ambiente (defina antes de rodar ou crie um .env):
+#   DATABASE_URL, REDIS_URL, CORS_ORIGINS
+#   VITE_API_URL (ex: https://api.seudominio.com/api/v1)
+
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    # Sem volume de mount de código em produção (imagem já contém o código).
+    volumes: []
+    command: >
+      sh -c "python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
