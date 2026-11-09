@@ -1,119 +1,78 @@
-# 🍴 FoodFlow — Plataforma de Delivery com Recomendação Personalizada
+# 🍴 FoodFlow
 
-Projeto de portfólio construído para a vaga de **Estágio/Residência em AI Engineer** no iFood. O objetivo é desenvolver um app de delivery mobile-first (inspirado em iFood, 99Food e Keeta) com **busca de restaurantes por proximidade** e um **sistema de recomendação personalizado** que aprende as preferências do usuário — análogo ao sistema **Red** do iFood.
+**Plataforma de Delivery com Recomendação Personalizada**
 
-> ⚠️ **Status atual:** frontend MVP e backend MVP (Fase 1/2) implementados. O frontend está integrado à API FastAPI com fallback para mocks quando a API está indisponível; o pipeline de LLMOps é o próximo passo. Este README documenta o que já foi entregue e o que vem a seguir.
-
----
+Projeto de portfólio desenvolvido para a vaga de **Estágio/Residência em AI Engineer** no iFood. O FoodFlow é um app de delivery mobile-first inspirado em iFood, 99Food e Keeta, com **busca de restaurantes por proximidade** (PostGIS) e um **sistema de recomendação personalizado** (LightGBM + LightGBM + LoRA re-ranking) que aprende as preferências do usuário por turno — análogo ao sistema **Red** do iFood.
 
 ## 📌 Índice
 
 - [Visão geral](#-visão-geral)
-- [O que já foi entregue](#-o-que-já-foi-entregue)
 - [Stack técnica](#-stack-técnica)
 - [Estrutura do repositório](#-estrutura-do-repositório)
 - [Como rodar o projeto](#-como-rodar-o-projeto)
+- [Endpoints da API](#-endpoints-da-api)
 - [Telas implementadas](#-telas-implementadas)
-- [Arquitetura de IA planejada (backend)](#-arquitetura-de-ia-planejada-backend)
+- [Arquitetura de IA](#-arquitetura-de-ia)
 - [Roadmap](#-roadmap)
-- [Conexão com a vaga de AI Engineer](#-conexão-com-a-vaga-de-ai-engineer)
+- [Autor](#-autor)
+- [Licença](#-licença)
 
 ---
 
 ## 🎯 Visão geral
 
-**FoodFlow** é um app de delivery que:
+O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial, recomendação personalizada e experiência mobile-first.
 
-- 📍 Localiza restaurantes próximos ao usuário (geolocalização).
-- 🍽️ Exibe informações completas: nome, endereço, telefone, avaliações, cardápio, taxa de entrega e tempo estimado.
-- ✨ Personaliza o feed de descoberta com base no histórico e preferências do usuário — destacado pela badge **“✨ Para você”**.
-- 📱 Funciona como aplicativo mobile (React Native previsto; protótipo atual em React + Vite simulando viewport mobile).
+### Funcionalidades principais
 
----
-
-## ✅ O que já foi entregue
-
-### 1. Documentação técnica de desenvolvimento
-
-Documento completo cobrindo:
-
-- Arquitetura de alto nível (mobile app + API + PostgreSQL/PostGIS + Redis + pipeline de ML).
-- Modelagem de dados geoespacial (PostGIS, `ST_DWithin`, índices GIST).
-- Estratégia de recomendação inspirada no **Red** do iFood (LightGBM + features por turno + medoides + batch scoring via Redis).
-- Uso de **LLMs** para enriquecimento de features e re-ranking (LoRA, embeddings, orquestração de agentes).
-- Pipeline de **MLOps/LLMOps** (MLflow, DVC, batch scoring, monitoramento de drift, A/B test).
-- Considerações de **LGPD** (localização e dados sensíveis).
-- Mapeamento explícito de cada requisito da vaga → solução proposta.
-
-📄 *Local:* documentação entregue junto ao projeto (arquivo `.md` separado ou seção no repositório).
-
-### 2. Prompt para o Lovable (protótipo frontend)
-
-Prompt estruturado para geração do protótipo visual no [Lovable](https://lovable.dev), contendo:
-
-- Identidade visual (cores, tipografia, componentes).
-- Especificação detalhada das **6 telas** (Onboarding, Home, Buscar, Detalhe do Restaurante, Pedidos, Perfil).
-- Estrutura de mock data, comportamentos esperados e critérios de sucesso.
-- Restrições de escopo (sem auth real, sem backend, sem pagamento real).
-
-### 3. Esqueleto do projeto no VSCode (este repositório)
-
-App **funcional e navegável** construído do zero com:
-
-- ✅ Configuração completa: **Vite + React 18 + TypeScript + Tailwind CSS + React Router + Zustand + Framer Motion + Lucide + Sonner**.
-- ✅ **Moldura de celular** no desktop (`MobileFrame`) — o app aparece centralizado em uma viewport de ~430px, simulando um dispositivo real.
-- ✅ **Bottom tab bar** funcional com 4 abas: Início, Buscar, Pedidos, Perfil.
-- ✅ **Todas as telas principais** navegáveis, com transições, estados de loading (skeletons) e toasts.
-- ✅ **Store de carrinho** (Zustand) com contador reativo no bottom nav.
-- ✅ **Mock data tipada** com 12 restaurantes completos (menus + avaliações).
-- ✅ **Busca e filtros client-side** funcionando.
-- ✅ **Design system** vermelho `#EA1D2C` (iFood-like), cards arredondados, tipografia Inter/Poppins.
-
-### 4. Backend MVP (FastAPI + PostGIS + Redis + LightGBM)
-
-- ✅ **Busca geoespacial** com `ST_DWithin`, índice GIST e distância calculada na mesma query.
-- ✅ **Detalhe do restaurante** com últimas 10 avaliações agregadas.
-- ✅ **Avaliações idempotentes** via header `Idempotency-Key` e atualização transacional de `average_rating`/`review_count`.
-- ✅ **Coleta de eventos** em PostgreSQL + Redis Stream.
-- ✅ **Recomendação LightGBM** com features por turno (one-hot do turno solicitado), medoides ponderados por recência e `1 positivo : 3 negativos` no treino.
-- ✅ **Serving com cache Redis** e fallback por popularidade para cold start.
-- ✅ **Batch scoring** por usuário/turno via `scripts/batch_score.py`, com agendamento por cron/Task Scheduler ou profile `batch` do Docker Compose.
-- ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
-- ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
-- ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **84 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API, monitoramento de drift, re-rankador LoRA e experimento A/B.
-
-📄 Detalhes em [`backend/README.md`](backend/README.md).
+| Recurso | Descrição |
+|---------|-----------|
+| 📍 **Busca geoespacial** | Restaurantes próximos calculados com PostGIS (`ST_DWithin` + índice GIST) |
+| ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada) + re-ranking LoRA |
+| 🎯 **A/B Test** | Experimento controlado: feed personalizado vs. feed por distância |
+| 📊 **Monitoramento de drift** | PSI (Population Stability Index) por feature com alertas automáticos |
+| 🔄 **Batch scoring** | Scores pré-calculados por usuário/turno gravados no Redis |
+| ⭐ **Avaliações idempotentes** | Header `Idempotency-Key` para evitar duplicatas |
+| 📱 **App mobile nativo** | React Native + Expo com todas as telas principais |
 
 ---
 
 ## 🧱 Stack técnica
 
-### Frontend (atual)
+### Frontend Web
 
 | Camada | Tecnologia |
-|---|---|
-| Build | **Vite 5** |
-| UI | **React 18 + TypeScript** |
-| Estilo | **Tailwind CSS 3** |
-| Roteamento | **React Router 6** |
-| Estado global | **Zustand** |
-| Animações | **Framer Motion** |
-| Ícones | **Lucide React** |
-| Toasts | **Sonner** |
-| Fontes | **Inter + Poppins** (Google Fonts) |
+|--------|------------|
+| Build | Vite 5 |
+| UI | React 18 + TypeScript |
+| Estilo | Tailwind CSS 3 |
+| Roteamento | React Router 6 |
+| Estado global | Zustand |
+| Animações | Framer Motion |
+| Ícones | Lucide React |
+| Toasts | Sonner |
+| Testes | Vitest + Testing Library |
 
-### Backend (MVP implementado)
+### Backend
 
 | Camada | Tecnologia |
-|---|---|
-| API | **FastAPI (Python 3.11)** |
-| Banco | **PostgreSQL 16 + PostGIS** |
-| Cache | **Redis 7** (scores + Redis Stream) |
-| Recomendação | **LightGBM** + features por turno |
-| LLMs | **LoRA + Hugging Face** (re-ranking / enriquecimento — roadmap) |
-| MLOps | **MLflow + DVC** (roadmap) |
-| Mobile nativo | **React Native + Expo** (migração do protótipo) |
+|--------|------------|
+| API | FastAPI (Python 3.11) |
+| Banco | PostgreSQL 16 + PostGIS |
+| Cache | Redis 7 |
+| Recomendação | LightGBM + features por turno |
+| Re-ranking | LoRA (transformers + peft + torch) |
+| MLOps | Métricas de drift, A/B test, batch scoring |
+| Observabilidade | X-Request-ID, X-Process-Time, readiness, métricas Prometheus |
+
+### Mobile
+
+| Camada | Tecnologia |
+|--------|------------|
+| Framework | React Native + Expo SDK 58 |
+| Roteamento | Expo Router |
+| Estado | Zustand |
+| Geolocalização | expo-location |
 
 ---
 
@@ -123,40 +82,48 @@ App **funcional e navegável** construído do zero com:
 foodflow/
 ├── README.md
 ├── CHANGELOG.md
-├── docker-compose.yml              ← PostgreSQL/PostGIS + Redis + API
-├── package.json                    ← scripts delegados do monorepo
+├── docker-compose.yml              # PostgreSQL/PostGIS + Redis + API
+├── docker-compose.prod.yml         # Produção (Dockerfile.prod)
+├── package.json                    # scripts delegados do monorepo
 ├── docs/
-│   └── arquitetura-tecnica.md      ← documentação técnica completa
+│   └── arquitetura-tecnica.md      # documentação técnica completa
 ├── backend/
 │   ├── README.md
-│   ├── Dockerfile
+│   ├── Dockerfile                  # desenvolvimento
+│   ├── Dockerfile.prod             # produção
 │   ├── requirements.txt
-│   ├── requirements-dev.txt
+│   ├── requirements-llmops.txt     # dependências opcionais de LLM
+│   ├── alembic.ini                 # migrações
+│   ├── alembic/                    # migrações versionadas
 │   ├── app/
-│   │   ├── main.py                 ← FastAPI + lifespan
-│   │   ├── models.py               ← Restaurant, User, Order, Review, Event
+│   │   ├── main.py                 # FastAPI + lifespan + middleware
+│   │   ├── models.py               # Restaurant, User, Order, Review, Event
 │   │   ├── schemas.py
-│   │   ├── crud.py                 ← busca geoespacial, reviews, eventos
-│   │   ├── seeds.py / seed_data.py ← seed idempotente
-│   │   ├── api/                    ← restaurants, reviews, recommendations, events
-│   │   ├── cache/redis_client.py   ← scores + Redis Stream
-│   │   ├── core/                   ← config + constantes
-│   │   └── ml/                     ← features, recommender, train
+│   │   ├── crud.py                 # busca geoespacial, reviews, eventos
+│   │   ├── seeds.py / seed_data.py # seed idempotente
+│   │   ├── api/                    # restaurants, reviews, recommendations, events, drift, experiment
+│   │   ├── cache/redis_client.py   # scores + Redis Stream + métricas A/B
+│   │   ├── core/                   # config + constantes
+│   │   └── ml/                     # features, recommender, train, reranker
+│   ├── scripts/
+│   │   ├── init_db.py              # migrações + seed
+│   │   ├── batch_score.py          # batch scoring por usuário/turno
+│   │   ├── drift_detect.py         # detecção de drift (PSI)
+│   │   ├── train_lora.py           # fine-tuning LoRA
+│   │   └── publish_lora.py         # publicação Hugging Face Hub
 │   └── tests/
-└── frontend/
-    ├── index.html
-    ├── package.json
-    ├── vite.config.ts
-    ├── tailwind.config.ts
-    └── src/
-        ├── main.tsx
-        ├── App.tsx                 ← rotas + moldura de celular
-        ├── lib/                    ← utils, busca, eventos, métricas
-        ├── types/                  ← Restaurant, MenuItem, Review, CartLine
-        ├── data/mockData.ts        ← 12 restaurantes mockados
-        ├── store/                  ← Zustand (carrinho, pedidos, favoritos…)
-        ├── components/             ← layout, home, restaurant, cart, common
-        └── pages/                  ← Onboarding, Home, Search, RestaurantDetail…
+├── frontend/                       # Web (Vite + React + TS)
+│   └── src/
+│       ├── lib/                    # api, config, catalog, utils
+│       ├── store/                  # Zustand (carrinho, pedidos, favoritos…)
+│       ├── components/             # layout, home, restaurant, cart, common
+│       └── pages/                  # Onboarding, Home, Search, RestaurantDetail…
+├── mobile/                         # Mobile (React Native + Expo)
+│   ├── src/app/                    # Expo Router (rotas baseadas em arquivos)
+│   ├── src/store/                  # Zustand stores
+│   ├── src/lib/                    # api, config, catalog, utils
+│   └── src/types/                  # tipos TypeScript
+└── mobile/                         # Mobile (React Native + Expo)
 ```
 
 ---
@@ -165,124 +132,68 @@ foodflow/
 
 ### Pré-requisitos
 
-- **Node.js 18+** ([download](https://nodejs.org))
-- **npm** (vem com Node)
-- **VSCode** com extensões recomendadas: *ESLint*, *Tailwind CSS IntelliSense*, *Prettier*
+- **Node.js 18+** e **npm**
+- **Python 3.11+** e **pip**
+- **Docker** e **Docker Compose** (opcional, para rodar com containers)
 
-### Passo a passo
-
-```bash
-# 1. Clone / abra o projeto
-cd foodflow
-
-# 2. Instale as dependências
-npm install
-
-# 3. Rode em modo de desenvolvimento
-npm run dev
-```
-
-O app abrirá em **`http://localhost:5173`**.
-
-### ⚠️ Problema comum no Windows (PowerShell)
-
-Se aparecer o erro:
-
-> `npm.ps1 não pode ser carregado porque a execução de scripts foi desabilitada`
-
-Execute uma vez no PowerShell:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
-
-Feche e reabra o terminal. Alternativa: use **Command Prompt (cmd)** no terminal do VSCode.
-
-### Rodando o backend
-
-Com Docker Compose (recomendado):
+### 1. Rodar com Docker Compose (recomendado)
 
 ```bash
-# Na raiz: sobe PostgreSQL/PostGIS, Redis e a API (seed automático)
+# Na raiz do projeto
 docker compose up -d
 ```
 
-Alternativa local:
+Isso sobe **PostgreSQL/PostGIS**, **Redis** e a **API FastAPI** com seed automático.
 
-1. **Criar banco e extensão PostGIS.** Abra o `psql` como superusuário:
+A API estará disponível em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
-```sql
-psql -U postgres
-CREATE ROLE foodflow LOGIN PASSWORD 'foodflow';
-CREATE DATABASE foodflow OWNER foodflow;
-\connect foodflow
-CREATE EXTENSION IF NOT EXISTS postgis;
-\q
-```
-
-Se o PostGIS não estiver instalado no PostgreSQL local, instale pelo Stack Builder do instalador do PostgreSQL. Verifique a conexão:
+### 2. Rodar o frontend web
 
 ```bash
-pg_isready -U foodflow -d foodflow
+cd frontend
+npm install
+npm run dev
 ```
 
-2. **Subir o Redis (opcional).** No WSL:
+O app abrirá em `http://localhost:5173`.
+
+### 3. Rodar o app mobile
 
 ```bash
-wsl sudo service redis-server start
-wsl redis-cli ping
+cd mobile
+npm install
+npx expo start
 ```
 
-Resposta esperada: `PONG`. Se não quiser subir o Redis agora, pule esta etapa.
+Use o **Expo Go** no seu celular ou emulador para visualizar.
 
-3. **Rodar o backend:**
+### 4. Rodar o backend localmente (sem Docker)
 
-```powershell
-cd C:\Users\gsilva\Documents\FoodFlow\backend
+```bash
+cd backend
 
-# Criar o ambiente virtual com Python 3.11
+# Criar ambiente virtual
 py -3.11 -m venv .venv
-
-# Ativar (se o PowerShell bloquear, veja a observação abaixo)
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1  # PowerShell
+# ou
+source .venv/bin/activate     # Linux/Mac
 
 # Instalar dependências
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-# Criar o .env local
-Copy-Item .env.example .env
+# Configurar variáveis de ambiente
+Copy-Item .env.example .env     # Windows
+# ou
+cp .env.example .env            # Linux/Mac
 
-# Criar tabelas e rodar o seed idempotente
+# Inicializar banco (migrações + seed)
 python scripts/init_db.py
 
 # Subir a API
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Saída esperada do seed:
-
-```text
-✅ Banco inicializado: {'restaurants': 12, 'users': 4, 'orders_created': 30, 'reviews_created': 36}
-```
-
-Se o PowerShell bloquear a ativação:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
-
-Ou use o Python do venv diretamente:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
-```
-
-A API estará em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
-
-#### Deploy de produção (Docker Compose)
-
-Para rodar em produção, use o compose de produção junto com o base:
+### 5. Deploy de produção
 
 ```bash
 # Na raiz do projeto
@@ -297,179 +208,150 @@ REDIS_URL=redis://redis:6379/0
 CORS_ORIGINS=https://app.seudominio.com,https://www.seudominio.com
 ```
 
-O build de produção usa `backend/Dockerfile.prod` (sem `--reload`, com o código empacotado na imagem) e aplica `init_db.py` (migrações + seed) na inicialização.
+O endpoint `/ready` serve como readiness probe e `/api/v1/metrics` expõe métricas no formato Prometheus.
 
-O endpoint `/ready` pode ser usado como readiness proxy e `/api/v1/metrics` expõe métricas no formato Prometheus para scraping.
+---
 
-4. **Rodar os testes.** Os testes não precisam de PostgreSQL nem Redis:
+## 🔌 Endpoints da API
 
-```powershell
-cd C:\Users\gsilva\Documents\FoodFlow\backend
-pip install -r requirements-dev.txt
-pytest -q
-```
+### Restaurantes
 
-Resultado esperado: `83 passed`.
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/v1/restaurants/search` | Busca geoespacial por lat/lon com raio e limite |
+| `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante com avaliações |
 
-5. **Verificação rápida da API.** Com a API rodando:
+### Recomendações
 
-```bash
-curl.exe http://localhost:8000/health
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/v1/recommendations` | Recomendações personalizadas (parâmetro `experiment` opcional: `personalized` \| `distance`) |
+| `POST` | `/api/v1/recommendations/train` | Treina o modelo LightGBM |
+| `POST` | `/api/v1/recommendations/train-lora` | Treina o adapter LoRA de re-ranking |
+| `POST` | `/api/v1/recommendations/rerank` | Re-executa re-ranking sobre scores em cache |
 
-curl.exe "http://localhost:8000/api/v1/restaurants/search?lat=-23.5325&lon=-46.7939&radius_km=5"
+### Avaliações
 
-# Treinar o modelo com os pedidos do seed
-curl.exe -X POST "http://localhost:8000/api/v1/recommendations/train"
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/api/v1/reviews` | Cria avaliação (idempotente via `Idempotency-Key`) |
+| `PUT` | `/api/v1/reviews/{id}` | Atualiza avaliação do próprio usuário |
+| `DELETE` | `/api/v1/reviews/{id}` | Remove avaliação do próprio usuário |
 
-# Testar recomendação para a usuária Ana Souza
-curl.exe "http://localhost:8000/api/v1/recommendations?user_id=a54a52c3-8543-56d3-8e4b-6d8220667bd5&lat=-23.5325&lon=-46.7939&turno=tarde"
+### Eventos
 
-# Calcular/gravar scores em lote para todos os usuários e turnos
-cd C:\Users\gsilva\Documents\FoodFlow\backend
-.\.venv\Scripts\python.exe scripts\batch_score.py
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/api/v1/events` | Coleta de eventos de interação do usuário |
 
-Documentação interativa: **`http://localhost:8000/docs`**.
+### Monitoramento
 
-### Scripts disponíveis
-
-| Comando | Descrição |
-|---|---|
-| `npm run dev:web` | Frontend em modo desenvolvimento |
-| `npm run build:web` | Build de produção do frontend |
-| `npm run test:web` | Testes do frontend (Vitest) — 132 testes passando |
-| `npm run dev:api` | API FastAPI local |
-| `npm run test:api` | Testes do backend (pytest) |
-| `npm run db:up` / `db:down` | Sobe/derruba os serviços Docker |
-| `npm run db:init` | Aplica migrações e roda o seed |
-| `npm run db:migrate` | Aplica apenas as migrações Alembic |
-| `npm run batch:score` | Calcula e grava os scores de recomendação no Redis |
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/health` | Health check + status do modelo |
+| `GET` | `/ready` | Readiness (PostgreSQL, Redis, modelo) |
+| `GET` | `/api/v1/metrics/recommendations` | Métricas de cache hit rate e estratégia |
+| `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados do experimento A/B |
+| `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
 
 ---
 
 ## 📱 Telas implementadas
 
-### 1. Onboarding (`/`)
-Splash com logo, CTA "Usar minha localização" → toast de sucesso → redireciona para Home.
+### Web (React + Vite)
 
-### 2. Home (`/home`)
-- Header com saudação, localização e ícone de carrinho.
-- Barra de busca (leads to `/buscar`).
-- **Seção "Recomendados para você"** — carrossel horizontal com badge “✨ Para você” nos cards recomendados.
-- **Seção "Perto de você"** — lista vertical com filtros por chips (Todos, Vegano, Promoções, Frete grátis, Mais bem avaliados).
-- **Grid de Categorias** (Pizza, Hambúrguer, Japonês, etc.).
-- Skeleton loading durante ~500ms simulando latência de API.
+| Tela | Descrição |
+|------|-----------|
+| `/` | Onboarding com geolocalização |
+| `/home` | Recomendados para você + Perto de você + Categorias |
+| `/buscar` | Busca textual com filtros e resultados |
+| `/restaurante/:id` | Detalhe do restaurante (cardápio, avaliações, sobre) |
+| `/sacola` | Carrinho de compras com confirmação de pedido |
+| `/pedidos` | Histórico de pedidos com status |
+| `/perfil` | Dados do usuário, preferências, experimento A/B, eventos |
 
-### 3. Buscar (`/buscar`)
-Campo de busca com autofocus, chips de buscas recentes, filtro client-side por nome/categoria, e estado vazio.
+### Mobile (React Native + Expo)
 
-### 4. Detalhe do Restaurante (`/restaurante/:id`)
-- Hero com imagem e botão de voltar.
-- Card de informações: nota, endereço, telefone clicável (`tel:`), taxa e tempo.
-- Badge **“✨ Recomendado para você”** quando aplicável.
-- **Tabs**: Cardápio (itens com botão “+” que adiciona ao carrinho), Avaliações (lista com estrelas), Sobre (placeholder).
-- Rodapé fixo: **“Ver sacola · R$ X,XX”** atualiza em tempo real.
-
-### 5. Pedidos (`/pedidos`)
-Histórico mockado de pedidos com status "Entregue" e botão "Pedir novamente".
-
-### 6. Perfil (`/perfil`)
-Avatar, dados do usuário, preferências alimentares (Vegano, Vegetariano, etc.) e seção de **preferências de recomendação** (placeholder para features de IA).
+| Tela | Descrição |
+|------|-----------|
+| Onboarding | Geolocalização e boas-vindas |
+| Início | Recomendados e restaurantes próximos |
+| Buscar | Busca textual |
+| Detalhe do Restaurante | Cardápio, avaliações, informações |
+| Sacola | Carrinho e finalização |
+| Pedidos | Histórico de pedidos |
+| Perfil | Preferências, experimento A/B, configurações |
 
 ---
 
-## 🧠 Arquitetura de IA (backend)
+## 🧠 Arquitetura de IA
 
-O backend já implementa o caminho de eventos, treino, serving, cache e batch scoring. O que falta é a integração do frontend:
+O pipeline de recomendação segue o fluxo:
 
 ```
 Eventos do app (cliques, pedidos, avaliações)
         ↓
-Feature Store (PostgreSQL + Redis)
+PostgreSQL + Redis (feature store + cache)
         ↓
-Pipeline de treino (LightGBM com features por turno + medoides)
+Pipeline de treino (LightGBM com features por turno)
         ↓
 Batch scoring diário → Redis (chave: user_id:turno → scores)
         ↓
-API /recommendations (FastAPI/NestJS) lê scores do Redis
+API /recommendations lê scores do Redis
+        ↓
+Re-ranking com adapter LoRA (quando disponível)
         ↓
 Frontend recebe lista ordenada por score
 ```
 
-**Implementado no MVP:** busca PostGIS, coleta de eventos, features por turno, treino LightGBM, serving com cache Redis, fallback por popularidade e batch scoring por usuário/turno.
+### Componentes de IA implementados
 
-**LLMs no fluxo (diferencial AI Engineer — roadmap):**
-- Enriquecimento de features com embeddings (descrições de menu + reviews).
-- Re-ranking com LLM pequeno ajustado via **LoRA** (Llama 3.2 1B / Qwen 2.5 1.5B).
-- Orquestração de agente (LangChain) para consultas em linguagem natural ("quero algo vegano e barato").
-- Modelo/adapter publicado no **Hugging Face Hub**.
-
-📄 Detalhes completos em `docs/arquitetura-tecnica.md` e [`backend/README.md`](backend/README.md).
+- **LightGBM**: classificação binária (clicou/não clicou) com features por turno
+- **LoRA**: fine-tuning de modelo pequeno para re-ranking de recomendações
+- **Drift monitoring**: PSI (Population Stability Index) comparando treino vs. serving
+- **A/B test**: comparação entre feed personalizado (ML) e feed por distância
+- **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
 
 ---
 
 ## 🗺️ Roadmap
 
 ### ✅ Concluído
+
 - [x] Documentação técnica e arquitetura de IA
-- [x] Prompt de protótipo visual (Lovable)
-- [x] Esqueleto do projeto (Vite + React + TS + Tailwind)
-- [x] Layout mobile com moldura de celular
-- [x] 6 telas navegáveis com mock data
-- [x] Store de carrinho com Zustand
-- [x] Busca e filtros client-side
-- [x] Sistema de toasts + skeleton loading
-- [x] `mockData.ts` com 12 restaurantes completos
-- [x] Página de sacola (`/sacola`) com confirmação de pedido
-- [x] Modal "Ver no mapa" e transições entre rotas
-- [x] Ajustes de acessibilidade (foco, `aria-label`, contraste)
-- [x] API FastAPI + PostgreSQL/PostGIS + Redis
+- [x] Frontend web (React + Vite + TypeScript + Tailwind)
+- [x] App móvel (React Native + Expo)
+- [x] Backend FastAPI + PostgreSQL/PostGIS + Redis
 - [x] Busca geoespacial, detalhe e avaliações idempotentes
-- [x] Coleta de eventos (`POST /events`) em PostgreSQL + Redis Stream
-- [x] Endpoint `/recommendations` com LightGBM e fallback por popularidade
-- [x] Pipeline de treino LightGBM com seed de pedidos e avaliações
-- [x] Batch scoring diário por usuário/turno → Redis
-- [x] Migrations com Alembic e baseline automático do schema legado
-- [x] Integrar o frontend à API (substituir mocks por chamadas HTTP)
-- [x] Endpoints `PUT` e `DELETE` de `/api/v1/reviews/{id}` para edição e remoção de avaliações
-- [x] Monitoramento de drift do recomendador (PSI por feature, endpoint `/api/v1/drift`, script `drift_detect.py`)
-- [x] LLMOps: re-ranking com LoRA (`backend/app/ml/reranker.py`), script de treino (`scripts/train_lora.py`), script de publicação Hugging Face (`scripts/publish_lora.py`), endpoints `/api/v1/recommendations/train-lora` e `/api/v1/recommendations/rerank`, requirements opcionais (`requirements-llmops.txt`)
-- [x] A/B test: feed personalizado vs. feed por distância (parâmetro `experiment` em `/recommendations`, endpoint `/api/v1/experiment/ab-test`, seletor no Perfil)
+- [x] Coleta de eventos (PostgreSQL + Redis Stream)
+- [x] Recomendação LightGBM com fallback por popularidade
+- [x] Pipeline de treino e batch scoring
+- [x] Migrations com Alembic
+- [x] Observabilidade (request ID, latência, readiness, métricas)
+- [x] Monitoramento de drift (PSI)
+- [x] Re-ranking com LoRA
+- [x] Experimento A/B de recomendações
+- [x] Deploy de produção com Docker Compose
 
 ### 🔄 Em andamento / Próximos passos
-- [ ] Deploy do backend (AWS/GCP) com monitoramento
 
-### 🎯 Longo prazo (LLMOps e portfólio)
-- [ ] Fine-tuning **LoRA** de LLM pequeno para re-ranking
-- [ ] Publicação do adapter no **Hugging Face Hub**
-- [ ] Deploy do backend (AWS/GCP) com monitoramento
-- [x] Migração do protótipo para **React Native + Expo** (app nativo)
+- [ ] Deploy do backend na nuvem (AWS/GCP) com monitoramento
+
+### 🎯 Longo prazo
+
+- [ ] Publicação do adapter LoRA no Hugging Face Hub
 - [ ] Artigo técnico publicado (Medium/dev.to) explicando a arquitetura
-
----
-
-## 🎯 Conexão com a vaga de AI Engineer
-
-| Requisito da vaga | Como o projeto atende |
-|---|---|
-| **GitHub com implementações de ML** | Este repositório + pipeline de treino a ser adicionado |
-| **Modelos publicados no Hugging Face** | Adapter LoRA do re-ranker (roadmap) |
-| **Projetos de pesquisa / artigos técnicos** | Documentação técnica + artigo no Medium (roadmap) |
-| **Competições Kaggle** | Uso de dataset público de delivery para benchmark |
-| **Construção de software com IA** | App frontend + API backend (FastAPI) + integração de modelo |
-| **Operacionalização de LLMs** | Fine-tuning LoRA + serving via vLLM/Ollama |
-| **MLOps / LLMOps** | MLflow, DVC, batch scoring, monitoramento de drift |
-| **Trabalho remoto, 30h/semana** | Escopo dimensionado para ~4 meses em regime parcial |
 
 ---
 
 ## 👤 Autor
 
-**Gustavo** — Software Developer.
+**Gustavo Henrique Barbosa** — Software Developer / AI Engineer
 
-- 📧 [barbosa.silva.gustavo56@gmail.com]
-- 💼 [LinkedIn]
-- 🐙 [GitHub]
+- 📧 [barbosa.silva.gustavo56@gmail.com](mailto:barbosa.silva.gustavo56@gmail.com)
+- 💼 [LinkedIn](https://www.linkedin.com/in/gustavo-henrique-barbosa-7571783b0/)
+- 🐙 [GitHub](https://github.com/gustav0barbosa-dev)
 
 ---
 
