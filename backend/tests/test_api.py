@@ -373,3 +373,40 @@ def test_recommendation_metrics_endpoint(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["cache_hit_rate"] == 0.5
     assert response.json()["redis_available"] is True
+
+
+def test_drift_endpoint(monkeypatch) -> None:
+    async def fake_report():
+        return {
+            "redis_available": True,
+            "overall_status": "ok",
+            "psi_threshold_warning": 0.1,
+            "psi_threshold_alert": 0.2,
+            "features_monitored": 2,
+            "features_with_alert": 0,
+            "features_with_warning": 0,
+            "alert_features": [],
+            "warning_features": [],
+            "features": [
+                {
+                    "feature": "restaurant_rating",
+                    "psi": 0.02,
+                    "status": "ok",
+                    "baseline_n": 100,
+                    "current_n": 100,
+                }
+            ],
+        }
+
+    from app.api import drift as drift_api
+
+    monkeypatch.setattr(drift_api.drift_monitor, "compute_drift_report", fake_report)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/drift")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overall_status"] == "ok"
+    assert body["features_monitored"] == 2
+    assert body["features"][0]["feature"] == "restaurant_rating"

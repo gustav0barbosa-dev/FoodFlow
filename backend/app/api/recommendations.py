@@ -81,26 +81,6 @@ async def recommendations(
         nearby, key=lambda restaurant: restaurant.score or 0.0, reverse=True
     )
 
-    # --- INÍCIO DO DRIFT LOGGING ---
-    # Registra as features servidas em background (não bloqueia a resposta)
-    async def log_recommendation_features():
-        log_features = {
-            "strategy": strategy_used,
-            "list_length": len(sorted_recommendations),
-            "turno": turno.value if hasattr(turno, "value") else str(turno),
-        }
-        
-        log_entry = RecommendationLog(
-            user_id=user_id,
-            turno=turno.value if hasattr(turno, "value") else str(turno),
-            features=log_features,
-        )
-        session.add(log_entry)
-        await session.commit()
-
-    background_tasks.add_task(log_recommendation_features)
-    # --- FIM DO DRIFT LOGGING ---
-
     return sorted_recommendations
 
 

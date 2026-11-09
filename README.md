@@ -81,7 +81,7 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
 - ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **55 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas e API.
+- ✅ **74 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API e monitoramento de drift.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -411,9 +411,9 @@ Frontend recebe lista ordenada por score
 - [x] Migrations com Alembic e baseline automático do schema legado
 - [x] Integrar o frontend à API (substituir mocks por chamadas HTTP)
 - [x] Endpoints `PUT` e `DELETE` de `/api/v1/reviews/{id}` para edição e remoção de avaliações
+- [x] Monitoramento de drift do recomendador (PSI por feature, endpoint `/api/v1/drift`, script `drift_detect.py`)
 
 ### 🔄 Em andamento / Próximos passos
-- [ ] Monitoramento de drift do recomendador
 - [ ] Responsividade refinada para telas maiores
 
 ### 🎯 Longo prazo (LLMOps e portfólio)
@@ -443,7 +443,7 @@ Frontend recebe lista ordenada por score
 
 ## 👤 Autor
 
-**Gustavo** — Candidato à vaga de Estágio/Residência em AI Engineer no iFood.
+**Gustavo** — Software Developer.
 
 - 📧 [e-mail de contato]
 - 💼 [LinkedIn]

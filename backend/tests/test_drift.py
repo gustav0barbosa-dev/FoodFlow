@@ -25,7 +25,8 @@ def test_psi_shifted_distribution_returns_high_value():
 
 def test_psi_slight_change_returns_low_value():
     # Baseline e atual com médias próximas (drift leve)
-    baseline = np.random.normal(loc=10, scale=2, size=1000)
-    current = np.random.normal(loc=10.5, scale=2, size=1000)
+    rng = np.random.RandomState(42)
+    baseline = rng.normal(loc=10, scale=2, size=1000)
+    current = rng.normal(loc=10.5, scale=2, size=1000)
     psi = compute_psi(baseline, current)
     assert psi < 0.2

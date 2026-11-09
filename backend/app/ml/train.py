@@ -1,5 +1,6 @@
 """Treino offline do recomendador LightGBM com dados de pedidos do banco."""
 import asyncio
+import logging
 import random
 from typing import Any
 
@@ -19,6 +20,8 @@ from app.ml.features import (
 )
 from app.ml.recommender import recommender
 from app.models import Order, Restaurant, User
+
+logger = logging.getLogger(__name__)
 
 NEGATIVES_PER_POSITIVE = 3
 RANDOM_SEED = 42
@@ -170,6 +173,19 @@ async def train() -> dict[str, Any] | None:
     model, metrics = _fit_and_evaluate(frame)
     feature_columns = [column for column in frame.columns if column != "clicked"]
     recommender.save(model, feature_columns, metadata=metrics)
+
+    # Salva a distribuição de treino (baseline) para cada feature monitorada,
+    # usada futuramente pelo monitoramento de drift.
+    try:
+        from app.services.drift import drift_monitor  # evita import circular
+
+        for feature in drift_monitor.feature_names:
+            if feature in frame.columns:
+                values = frame[feature].dropna().astype(float).tolist()
+                await drift_monitor.save_baseline(feature, values)
+    except Exception as exc:  # não deve falhar o treino por causa do drift
+        logger.warning("Falha ao salvar baseline de drift: %s", exc)
+
     return metrics
 
 

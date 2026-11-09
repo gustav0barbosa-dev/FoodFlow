@@ -1,4 +1,5 @@
 """Serving do recomendador LightGBM com cache de scores no Redis."""
+import asyncio
 import logging
 import math
 from datetime import datetime, timezone
@@ -132,6 +133,25 @@ class Recommender:
             str(restaurant.id): float(score)
             for restaurant, score in zip(restaurants, probabilities, strict=True)
         }
+
+        # Registra as features usadas em serving para monitoramento de drift
+        # sem bloquear a predição (usa o event loop atual).
+        try:
+            from app.services.drift import drift_monitor  # evita import circular
+
+            loop = asyncio.get_event_loop()
+            for _, row in frame.iterrows():
+                for feature in drift_monitor.feature_names:
+                    if feature in row:
+                        value = row[feature]
+                        if pd.notna(value):
+                            asyncio.run_coroutine_threadsafe(
+                                drift_monitor.record_serving(feature, float(value)),
+                                loop,
+                            )
+        except Exception as exc:  # drift não deve falhar a predição
+            logger.warning("Falha ao registrar features de serving para drift: %s", exc)
+
         return normalize_scores(raw_scores)
 
 

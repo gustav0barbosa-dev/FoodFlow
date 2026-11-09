@@ -32,7 +32,14 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `frontend/.env.example` e `src/vite-env.d.ts`: variáveis de ambiente e types do Vite
 - Testes novos: `src/lib/api.test.ts` (7), `src/lib/catalog.test.ts` (8), `src/lib/config.test.ts` (5)
 - 132 testes do frontend passando; build de produção OK
-- Endpoints `PUT /api/v1/reviews/{review_id}` e `DELETE /api/v1/reviews/{review_id}` no backend
+- Monitoramento de drift do recomendador:
+  - `backend/app/services/drift.py`: `DriftMonitor` com PSI (Population Stability Index) para comparar distribuições de treino (baseline) vs serving; thresholds de warning (0.1) e alerta (0.2); degradação graciosa sem Redis
+  - `backend/app/api/drift.py`: endpoint `GET /api/v1/drift` com relatório de drift por feature
+  - `backend/app/ml/train.py`: salva a distribuição de treino como baseline após cada treino
+  - `backend/app/ml/recommender.py`: registra features usadas em serving para cálculo de drift
+  - `backend/scripts/drift_detect.py`: script CLI para detecção periódica de drift (cron/Task Scheduler)
+  - `backend/scripts/drift_detect.py` adicionado ao `package.json` como `drift-detect`
+- Testes novos: `tests/test_drift_monitor.py` (monitor de drift), `tests/test_drift.py` (compute_psi com seed fixo)
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`
