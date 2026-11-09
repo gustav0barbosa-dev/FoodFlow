@@ -1,5 +1,13 @@
 """Cria tabelas, aplica ajustes incrementais e popula o seed idempotente."""
 import asyncio
+import sys
+from pathlib import Path
+
+# Quando executado como `python scripts/init_db.py`, o Python adiciona apenas
+# `backend/scripts` ao sys.path. Incluímos `backend/` para importar o pacote app.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from sqlalchemy import text
 
