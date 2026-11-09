@@ -78,8 +78,9 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Recomendação LightGBM** com features por turno (one-hot do turno solicitado), medoides ponderados por recência e `1 positivo : 3 negativos` no treino.
 - ✅ **Serving com cache Redis** e fallback por popularidade para cold start.
 - ✅ **Batch scoring** por usuário/turno via `scripts/batch_score.py`, com agendamento por cron/Task Scheduler ou profile `batch` do Docker Compose.
+- ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **42 testes automatizados** cobrindo features, treino, modelo, batch scoring, query PostGIS, schemas e API.
+- ✅ **45 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, query PostGIS, schemas e API.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -286,7 +287,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Resultado esperado: `42 passed`.
+Resultado esperado: `45 passed`.
 
 5. **Verificação rápida da API.** Com a API rodando:
 
@@ -318,7 +319,8 @@ Documentação interativa: **`http://localhost:8000/docs`**.
 | `npm run dev:api` | API FastAPI local |
 | `npm run test:api` | Testes do backend (pytest) |
 | `npm run db:up` / `db:down` | Sobe/derruba os serviços Docker |
-| `npm run db:init` | Cria tabelas e roda o seed |
+| `npm run db:init` | Aplica migrações e roda o seed |
+| `npm run db:migrate` | Aplica apenas as migrações Alembic |
 | `npm run batch:score` | Calcula e grava os scores de recomendação no Redis |
 
 ---
@@ -405,10 +407,10 @@ Frontend recebe lista ordenada por score
 - [x] Endpoint `/recommendations` com LightGBM e fallback por popularidade
 - [x] Pipeline de treino LightGBM com seed de pedidos e avaliações
 - [x] Batch scoring diário por usuário/turno → Redis
+- [x] Migrations com Alembic e baseline automático do schema legado
 
 ### 🔄 Em andamento / Próximos passos
 - [ ] Integrar o frontend à API (substituir mocks por chamadas HTTP)
-- [ ] Migrations com Alembic (hoje `create_all` + DDL incremental)
 - [ ] Monitoramento de latência e drift do recomendador
 - [ ] Responsividade refinada para telas maiores
 

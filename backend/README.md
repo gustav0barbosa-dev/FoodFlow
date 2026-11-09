@@ -86,6 +86,27 @@ uvicorn app.main:app --reload
 
 A API estará disponível em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
+## Migrações (Alembic)
+
+O schema é versionado em `alembic/versions/`. O `scripts/init_db.py` executa `alembic upgrade head` antes do seed, então o fluxo local e o Docker Compose continuam iguais.
+
+```bash
+cd backend
+python -m alembic upgrade head          # aplica migrações pendentes
+python -m alembic current               # revisão aplicada no banco
+python -m alembic history               # histórico de revisões
+python -m alembic upgrade head --sql    # revisa o SQL sem conectar
+python -m alembic revision --autogenerate -m "descricao"  # após mudar models.py
+```
+
+A migração inicial cria a extensão PostGIS. Se a role do banco não for superusuária, crie a extensão antes como `postgres`:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+```
+
+Bancos que foram criados pela versão anterior (`Base.metadata.create_all`) não possuem `alembic_version`. O `init_db.py` detecta a tabela `restaurants` e executa `stamp head` uma única vez antes de aplicar as migrações.
+
 ## Seed
 
 O `scripts/init_db.py` é **idempotente** e popula:
@@ -105,12 +126,16 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 
 ```
 backend/
+├── alembic.ini                  # configuração do Alembic
+├── alembic/
+│   ├── env.py
+│   └── versions/                # migrações versionadas
 ├── Dockerfile
 ├── requirements.txt
 ├── requirements-dev.txt
@@ -140,7 +165,7 @@ backend/
 │       └── train.py             # dataset, treino e métricas
 ├── models/                      # artefatos .joblib (gitignored)
 ├── scripts/
-│   ├── init_db.py
+│   ├── init_db.py               # migrações Alembic + seed
 │   └── batch_score.py           # CLI do batch scoring (cron/Task Scheduler)
 └── tests/
 ```
