@@ -1,14 +1,19 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.core.constants import EventType
 
 
 class RestaurantOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
-    description: str | None
-    phone: str | None
+    description: str | None = None
+    phone: str | None = None
     address: str
     distance_km: float | None = None
     categories: list[str]
@@ -17,10 +22,27 @@ class RestaurantOut(BaseModel):
     delivery_fee: float
     delivery_time_min: int
     delivery_time_max: int
-    image_url: str | None
+    image_url: str | None = None
 
-    class Config:
-        from_attributes = True
+
+class ReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    restaurant_id: UUID
+    user_id: UUID
+    user_name: str | None = None
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+
+
+class RestaurantDetailOut(RestaurantOut):
+    reviews: list[ReviewOut] = Field(default_factory=list)
+
+
+class RecommendationOut(RestaurantOut):
+    score: float = 0.0
 
 
 class RestaurantSearchParams(BaseModel):
@@ -31,16 +53,22 @@ class RestaurantSearchParams(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class ReviewCreate(BaseModel):
+    restaurant_id: UUID
+    user_id: UUID
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
 class EventIn(BaseModel):
-    type: str = Field(max_length=60)
-    payload: dict[str, Any] = {}
+    type: EventType
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class EventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     type: str
     payload: dict[str, Any]
     created_at: datetime
-
-    class Config:
-        from_attributes = True

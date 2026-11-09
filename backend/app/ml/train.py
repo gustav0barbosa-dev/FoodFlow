@@ -1,62 +1,157 @@
-"""Treino offline do recomendador LightGBM com dados sintéticos."""
+"""Treino offline do recomendador LightGBM com dados de pedidos do banco."""
 import asyncio
+import random
+from typing import Any
+
+import pandas as pd
+from lightgbm import LGBMClassifier
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import AsyncSessionLocal
-from app.models import Order, Restaurant, User
+from app.ml.features import build_candidate_features, build_user_features
 from app.ml.recommender import recommender
-from app.ml.features import build_user_features
+from app.models import Order, Restaurant, User
+
+NEGATIVES_PER_POSITIVE = 3
+RANDOM_SEED = 42
 
 
-async def load_training_data(session):
-    """Gera dados sintéticos de treino: (user, restaurante) -> clicou ou não."""
-    orders = (await session.execute(select(Order))).scalars().all()
-    users = (await session.execute(select(User))).scalars().all()
-    restaurants = (await session.execute(select(Restaurant))).scalars().all()
+def build_training_frame(
+    users: list[User],
+    orders: list[Order],
+    restaurants: list[Restaurant],
+    negatives_per_positive: int = NEGATIVES_PER_POSITIVE,
+    seed: int = RANDOM_SEED,
+) -> pd.DataFrame:
+    """Gera amostras (usuário, restaurante) com 1 positivo : N negativos.
 
-    rows = []
+    Para evitar vazamento, as features de um positivo são calculadas sem os
+    pedidos daquele restaurante (leave-one-restaurant-out).
+    """
+    if not users or not restaurants:
+        return pd.DataFrame()
+
+    restaurant_by_id = {restaurant.id: restaurant for restaurant in restaurants}
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+
     for user in users:
-        user_orders = [o for o in orders if o.user_id == user.id]
-        user_features = build_user_features(user_orders, user)
+        user_orders = [order for order in orders if order.user_id == user.id]
+        if not user_orders:
+            continue
 
-        for r in restaurants:
-            # Positivo: usuário já pediu deste restaurante
-            positivo = any(o.restaurant_id == r.id for o in user_orders)
-            rows.append({
-                **user_features,
-                "restaurant_id": str(r.id),
-                "restaurant_rating": float(r.average_rating),
-                "restaurant_review_count": int(r.review_count),
-                "restaurant_delivery_fee": float(r.delivery_fee),
-                "clicked": 1 if positivo else 0,
-            })
+        positive_ids = sorted(
+            {
+                order.restaurant_id
+                for order in user_orders
+                if order.restaurant_id in restaurant_by_id
+            }
+        )
+        if not positive_ids:
+            continue
+
+        for restaurant_id in positive_ids:
+            history_without_target = [
+                order for order in user_orders if order.restaurant_id != restaurant_id
+            ]
+            features = build_user_features(history_without_target, user)
+            row = build_candidate_features(features, restaurant_by_id[restaurant_id])
+            row["clicked"] = 1
+            rows.append(row)
+
+        negative_candidates = [
+            restaurant
+            for restaurant in restaurants
+            if restaurant.id not in set(positive_ids)
+        ]
+        sample_size = min(
+            len(negative_candidates),
+            max(1, len(positive_ids) * negatives_per_positive),
+        )
+        for restaurant in rng.sample(negative_candidates, sample_size):
+            features = build_user_features(user_orders, user)
+            row = build_candidate_features(features, restaurant)
+            row["clicked"] = 0
+            rows.append(row)
 
     return pd.DataFrame(rows)
 
 
-async def train():
-    async with AsyncSessionLocal() as session:
-        df = await load_training_data(session)
-
-    if df.empty or df["clicked"].nunique() < 2:
-        print("⚠️ Dados insuficientes para treino; modelo não salvo")
-        return
-
-    feature_cols = [c for c in df.columns if c not in ("clicked", "restaurant_id")]
-    X = df[feature_cols].fillna(0)
-    y = df["clicked"]
+def _fit_and_evaluate(frame: pd.DataFrame) -> tuple[LGBMClassifier, dict[str, Any]]:
+    feature_columns = [column for column in frame.columns if column != "clicked"]
+    X = frame[feature_columns].fillna(0.0).astype(float)
+    y = frame["clicked"].astype(int)
 
     model = LGBMClassifier(
-        n_estimators=100,
+        n_estimators=200,
         max_depth=5,
-        learning_rate=0.1,
-        random_state=42,
+        num_leaves=15,
+        learning_rate=0.05,
+        min_child_samples=5,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        is_unbalance=True,
+        random_state=RANDOM_SEED,
         verbose=-1,
     )
-    model.fit(X, y)
 
-    recommender.save(model, feature_cols)
-    print(f"✅ Modelo treinado com {len(df)} amostras, {len(feature_cols)} features")
+    auc: float | None = None
+    if len(frame) >= 40 and y.nunique() == 2:
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X,
+                y,
+                test_size=0.25,
+                random_state=RANDOM_SEED,
+                stratify=y,
+            )
+            model.fit(X_train, y_train)
+            auc = float(roc_auc_score(y_test, model.predict_proba(X_test)[:, 1]))
+        except ValueError:
+            model.fit(X, y)
+
+    if auc is None:
+        model.fit(X, y)
+
+    metrics = {
+        "samples": int(len(frame)),
+        "positives": int(y.sum()),
+        "negatives": int((1 - y).sum()),
+        "features": len(feature_columns),
+        "roc_auc": round(auc, 4) if auc is not None else None,
+    }
+    return model, metrics
+
+
+async def load_training_data(
+    session: AsyncSession,
+) -> tuple[list[User], list[Order], list[Restaurant]]:
+    users = (await session.execute(select(User))).scalars().all()
+    orders = (await session.execute(select(Order))).scalars().all()
+    restaurants = (await session.execute(select(Restaurant))).scalars().all()
+    return list(users), list(orders), list(restaurants)
+
+
+async def train() -> dict[str, Any] | None:
+    async with AsyncSessionLocal() as session:
+        users, orders, restaurants = await load_training_data(session)
+
+    frame = build_training_frame(users, orders, restaurants)
+    if frame.empty or frame["clicked"].nunique() < 2:
+        return None
+
+    model, metrics = _fit_and_evaluate(frame)
+    feature_columns = [column for column in frame.columns if column != "clicked"]
+    recommender.save(model, feature_columns, metadata=metrics)
+    return metrics
 
 
 if __name__ == "__main__":
-    asyncio.run(train())
+    result = asyncio.run(train())
+    if result is None:
+        print("⚠️ Dados insuficientes para treino; modelo não salvo.")
+    else:
+        print(f"✅ Modelo treinado: {result}")

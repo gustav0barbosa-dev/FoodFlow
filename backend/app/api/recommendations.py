@@ -1,85 +1,69 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+from app import crud
+from app.cache.redis_client import clear_scores, get_scores, set_scores
+from app.core.constants import Turno
 from app.database import get_db
-from app.models import Restaurant, Order, User
-from app.ml.recommender import recommender
-from app.cache.redis_client import get_scores, set_scores
-from app.crud import search_restaurants
-from app.schemas import RestaurantSearchParams
-from uuid import UUID
+from app.ml.features import build_user_features
+from app.ml.recommender import popularity_scores, recommender
+from app.ml.train import train
+from app.schemas import RecommendationOut, RestaurantSearchParams
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
-@router.get("")
+@router.get("", response_model=list[RecommendationOut])
 async def recommendations(
-    user_id: str = Query(...),
+    user_id: UUID = Query(...),
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
-    turno: str = Query("tarde"),
+    turno: Turno = Query("tarde"),
     session: AsyncSession = Depends(get_db),
 ):
-    try:
-        uid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="user_id inválido")
-
-    # 1. Tenta scores do Redis (cache)
-    scores = await get_scores(str(uid), turno)
-
-    # 2. Busca restaurantes próximos (raio 10km como base)
-    params = RestaurantSearchParams(lat=lat, lon=lon, radius_km=10, limit=50, offset=0)
-    nearby = await search_restaurants(session, params)
-
+    params = RestaurantSearchParams(
+        lat=lat,
+        lon=lon,
+        radius_km=10,
+        limit=50,
+        offset=0,
+    )
+    nearby = await crud.search_restaurants(session, params)
     if not nearby:
         return []
 
-    restaurant_ids = [str(r.id) for r in nearby]
-
-    # 3. Se não há scores em cache, usa fallback por popularidade ou modelo
+    scores = await get_scores(str(user_id), turno)
     if scores is None:
-        if recommender.model is not None:
-            result = await session.execute(select(User).where(User.id == uid))
-            user = result.scalars().first()
-            orders = (
-                await session.execute(select(Order).where(Order.user_id == uid))
-            ).scalars().all()
-            from app.ml.features import build_user_features
+        user = await crud.get_user(session, user_id)
+        orders = await crud.get_user_orders(session, user_id) if user else []
 
-            user_features = build_user_features(orders, user) if user else {}
-            scores = recommender.predict_scores(user_features, restaurant_ids)
-            await set_scores(str(uid), turno, scores)
+        if recommender.model is not None and orders and user is not None:
+            user_features = build_user_features(orders, user)
+            scores = recommender.predict_scores(user_features, nearby)
         else:
-            # Fallback: ordenar por avaliação (popularidade)
-            ranked = sorted(
-                nearby, key=lambda r: (r.average_rating, r.review_count), reverse=True
-            )
-            scores = {str(r.id): float(r.average_rating) / 5.0 for r in ranked}
-    else:
-        # Se há cache mas o modelo foi carregado, recalcula para consistência
-        if recommender.model is not None:
-            from app.ml.features import build_user_features
+            # Cold start: popularidade como fallback documentado.
+            scores = popularity_scores(nearby)
 
-            result = await session.execute(select(User).where(User.id == uid))
-            user = result.scalars().first()
-            orders = (
-                await session.execute(select(Order).where(Order.user_id == uid))
-            ).scalars().all()
-            user_features = build_user_features(orders, user) if user else {}
-            scores = recommender.predict_scores(user_features, restaurant_ids)
-            await set_scores(str(uid), turno, scores)
+        await set_scores(str(user_id), turno, scores)
 
-    # 4. Reordena os restaurantes próximos pelos scores
-    score_map = {str(r.id): scores.get(str(r.id), 0.0) for r in nearby}
-    ranked = sorted(nearby, key=lambda r: score_map.get(str(r.id), 0.0), reverse=True)
+    for restaurant in nearby:
+        restaurant.score = round(
+            float(scores.get(str(restaurant.id), 0.0)),
+            4,
+        )
 
-    return ranked
+    return sorted(nearby, key=lambda restaurant: restaurant.score or 0.0, reverse=True)
 
 
 @router.post("/train")
 async def train_model():
-    from app.ml.train import train
-
-    await train()
-    return {"status": "training_done"}
+    metrics = await train()
+    if metrics is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Dados insuficientes para treino (necessário ao menos 1 pedido por usuário).",
+        )
+    invalidated = await clear_scores()
+    return {"status": "trained", **metrics, "cache_invalidated": invalidated}

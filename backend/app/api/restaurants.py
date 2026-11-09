@@ -1,10 +1,16 @@
-from typing import Sequence
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.models import Restaurant
-from app.schemas import RestaurantOut, RestaurantSearchParams
+
 from app import crud
+from app.database import get_db
+from app.schemas import (
+    RestaurantDetailOut,
+    RestaurantOut,
+    RestaurantSearchParams,
+    ReviewOut,
+)
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
@@ -19,23 +25,30 @@ async def search_restaurants(
     session: AsyncSession = Depends(get_db),
 ):
     params = RestaurantSearchParams(
-        lat=lat, lon=lon, radius_km=radius_km, limit=limit, offset=offset
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+        limit=limit,
+        offset=offset,
     )
-    restaurants = await crud.search_restaurants(session, params)
-    return restaurants
+    return await crud.search_restaurants(session, params)
 
 
-@router.get("/{restaurant_id}", response_model=RestaurantOut)
+@router.get("/{restaurant_id}", response_model=RestaurantDetailOut)
 async def get_restaurant(
-    restaurant_id: str,
+    restaurant_id: UUID,
     session: AsyncSession = Depends(get_db),
 ):
-    try:
-        uid = UUID(restaurant_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="ID inválido")
-
-    restaurant = await crud.get_restaurant(session, uid)
-    if not restaurant:
+    restaurant = await crud.get_restaurant(session, restaurant_id)
+    if restaurant is None:
         raise HTTPException(status_code=404, detail="Restaurante não encontrado")
-    return restaurant
+
+    reviews = await crud.get_restaurant_reviews(session, restaurant_id)
+    payload = RestaurantOut.model_validate(restaurant).model_dump()
+    payload["reviews"] = [
+        ReviewOut.model_validate(review).model_copy(
+            update={"user_name": user_name}
+        )
+        for review, user_name in reviews
+    ]
+    return RestaurantDetailOut(**payload)

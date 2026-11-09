@@ -44,6 +44,16 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Python tests / caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ML artifacts (reprodutíveis via train.py)
+backend/models/*.joblib
+backend/models/*.pkl
+
 # Docker
 .dockerignore
 
