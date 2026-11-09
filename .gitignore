@@ -13,6 +13,7 @@ eggs/
 parts/
 lib/
 lib64/
+!frontend/src/lib/
 sdist/
 var/
 wheels/
