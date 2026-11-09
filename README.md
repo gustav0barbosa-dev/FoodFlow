@@ -125,12 +125,12 @@ foodflow/
     ├── data/
     │   └── mockData.ts             ← restaurantes, categorias, usuário mock
     ├── store/
-    │   └── cartStore.ts            ← Zustand (addItem, total, count)
+    │   └── *Store.ts               ← Zustand (carrinho, pedidos, favoritos, filtros…)
     ├── components/
     │   ├── layout/                 ← MobileFrame, BottomNav
     │   ├── home/                   ← SearchBar, FilterChips
     │   ├── restaurant/             ← RestaurantCard, MenuItem, ReviewCard…
-    │   └── common/                 ← SkeletonCard
+    │   └── common/                 ← Skeleton, HighlightMatch, EmptyState, ErrorState
     └── pages/
         ├── Onboarding.tsx
         ├── Home.tsx
