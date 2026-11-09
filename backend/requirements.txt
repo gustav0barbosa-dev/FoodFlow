@@ -3,8 +3,12 @@ uvicorn[standard]==0.32.0
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.29.0
 psycopg2-binary==2.9.9
-geoalchemy2[postgis]==0.14.0
+geoalchemy2==0.21.0
 redis==5.1.1
 pydantic-settings==2.4.0
 python-dotenv==1.0.1
 alembic==1.13.2
+lightgbm==4.5.0
+scikit-learn==1.5.0
+pandas==2.2.0
+numpy==1.26.0

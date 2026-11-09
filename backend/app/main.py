@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import restaurants, events
+from app.api import restaurants, events, recommendations
 
 app = FastAPI(title="FoodFlow API", version="0.1.0")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 
 app.include_router(restaurants.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
+app.include_router(recommendations.router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
