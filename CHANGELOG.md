@@ -63,6 +63,16 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `frontend/.env.example`: documentação de `VITE_API_URL` para desenvolvimento e produção
   - Healthcheck do backend no `docker-compose.yml` (endpoint `/ready`)
   - Endpoint `/api/v1/metrics` no formato Prometheus para scraping
+- Experimento A/B de recomendações:
+  - `backend/app/api/recommendations.py`: parâmetro `experiment` (`personalized`/`distance`) no endpoint `/recommendations`; atribuição determinística por hash do `user_id` quando omitido; métricas separadas por grupo (`metrics:ab:personalized:requests`, `metrics:ab:distance:requests`)
+  - `backend/app/api/experiment.py`: endpoint `GET /api/v1/experiment/ab-test` com resultados acumulados (total, por grupo, share)
+  - `backend/app/cache/redis_client.py`: funções `increment_ab_test_metrics` e `get_ab_test_metrics`
+  - `frontend/src/lib/config.ts`: tipo `ABGroup`, `DEFAULT_AB_GROUP`, `getABGroup()`, variável `VITE_AB_GROUP`
+  - `frontend/src/lib/api.ts`: parâmetro `experiment` em `getRecommendations`; função `getABTestResults`
+  - `frontend/src/hooks/useRecommendations.ts`: passa o grupo A/B para a API; retorna `experimentGroup`
+  - `frontend/src/pages/Home.tsx`: exibe o grupo A/B ativo na seção de recomendados
+  - `frontend/src/pages/Profile.tsx`: seletor de grupo A/B (padrão/personalizado/distância) e painel de resultados acumulados
+  - `frontend/.env.example`: variável `VITE_AB_GROUP`
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

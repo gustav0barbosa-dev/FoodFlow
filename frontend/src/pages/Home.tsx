@@ -29,7 +29,9 @@ export function Home() {
   const navigate = useNavigate()
   const count = useCartStore((s) => s.count())
   const { restaurants } = useCatalog()
-  const { recommended } = useRecommendations(restaurants)
+  const { recommended, loading: recommendationsLoading, experimentGroup } = useRecommendations(
+    restaurants
+  )
   const locationLabel = useLocationStore((s) => s.label)
   const [loading, setLoading] = useState(true)
   const sort = useSortStore((s) => s.sort)
@@ -125,6 +127,11 @@ export function Home() {
           Recomendados para você
         </h2>
         <p className="text-xs text-ink-soft mb-3">Baseado no seu histórico e horário</p>
+        {experimentGroup && (
+          <p className="text-[10px] text-ink-soft mb-3">
+            Experimento A/B: <span className="font-medium text-ink">{experimentGroup === 'personalized' ? 'Recomendações personalizadas' : 'Por distância'}</span>
+          </p>
+        )}
         <div
           className={cn(
             // Mobile: carrossel horizontal.

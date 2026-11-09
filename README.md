@@ -81,7 +81,7 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
 - ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **83 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API, monitoramento de drift e re-rankador LoRA.
+- ✅ **84 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas, API, monitoramento de drift, re-rankador LoRA e experimento A/B.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -434,17 +434,15 @@ Frontend recebe lista ordenada por score
 - [x] Endpoints `PUT` e `DELETE` de `/api/v1/reviews/{id}` para edição e remoção de avaliações
 - [x] Monitoramento de drift do recomendador (PSI por feature, endpoint `/api/v1/drift`, script `drift_detect.py`)
 - [x] LLMOps: re-ranking com LoRA (`backend/app/ml/reranker.py`), script de treino (`scripts/train_lora.py`), script de publicação Hugging Face (`scripts/publish_lora.py`), endpoints `/api/v1/recommendations/train-lora` e `/api/v1/recommendations/rerank`, requirements opcionais (`requirements-llmops.txt`)
+- [x] A/B test: feed personalizado vs. feed por distância (parâmetro `experiment` em `/recommendations`, endpoint `/api/v1/experiment/ab-test`, seletor no Perfil)
 
 ### 🔄 Em andamento / Próximos passos
 - [ ] Deploy do backend (AWS/GCP) com monitoramento
-- [ ] A/B test: feed personalizado vs. feed por distância
-- [ ] Longo prazo (LLMOps e portfólio)
 
 ### 🎯 Longo prazo (LLMOps e portfólio)
 - [ ] Fine-tuning **LoRA** de LLM pequeno para re-ranking
 - [ ] Publicação do adapter no **Hugging Face Hub**
 - [ ] Deploy do backend (AWS/GCP) com monitoramento
-- [ ] A/B test: feed personalizado vs. feed por distância
 - [ ] Migração do protótipo para **React Native + Expo** (app nativo)
 - [ ] Artigo técnico publicado (Medium/dev.to) explicando a arquitetura
 

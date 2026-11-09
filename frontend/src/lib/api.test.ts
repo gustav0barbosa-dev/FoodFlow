@@ -78,7 +78,7 @@ describe('api client', () => {
     const rawHeaders = init?.headers
     let idempotencyKey: string | undefined
     if (rawHeaders && typeof (rawHeaders as Headers).get === 'function') {
-      idempotencyKey = (rawHeaders as Headers).get('Idempotency-Key')
+      idempotencyKey = (rawHeaders as Headers).get('Idempotency-Key') ?? undefined
     } else if (rawHeaders && !Array.isArray(rawHeaders)) {
       idempotencyKey = (rawHeaders as Record<string, string>)['Idempotency-Key']
     }

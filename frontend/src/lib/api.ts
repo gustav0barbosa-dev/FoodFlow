@@ -143,15 +143,28 @@ export function getRecommendations({
   lat,
   lon,
   turno,
+  experiment,
 }: {
   userId: string
   lat: number
   lon: number
   turno: string
+  experiment?: string
 }): Promise<ApiRecommendation[]> {
   return request<ApiRecommendation[]>(
-    `/recommendations?${query({ user_id: userId, lat, lon, turno })}`
+    `/recommendations?${query({ user_id: userId, lat, lon, turno, experiment })}`
   )
+}
+
+export function getABTestResults(): Promise<{
+  redis_available: boolean
+  total_requests: number
+  personalized_requests: number
+  distance_requests: number
+  personalized_share: number
+  distance_share: number
+}> {
+  return request('/experiment/ab-test')
 }
 
 export function createReview(

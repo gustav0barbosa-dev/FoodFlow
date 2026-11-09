@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react'
 import { getRecommendations } from '@/lib/api'
 import { mapApiRestaurant } from '@/lib/catalog'
-import { API_USER_ID, getCurrentTurno } from '@/lib/config'
+import { API_USER_ID, getABGroup, getCurrentTurno } from '@/lib/config'
 import { useCatalogStore } from '@/store/catalogStore'
 import { useLocationStore } from '@/store/locationStore'
 import type { Restaurant } from '@/types'
 
 /**
  * Busca recomendações personalizadas e usa o catálogo local como fallback
- * quando a API está indisponível.
+ * quando a API está indisponível. Respeita o grupo do experimento A/B
+ * (personalized ou distance) definido via VITE_AB_GROUP.
  */
 export function useRecommendations(initial: Restaurant[]) {
   const [recommended, setRecommended] = useState<Restaurant[]>(() =>
     initial.filter((restaurant) => restaurant.isRecommended)
   )
   const [loading, setLoading] = useState(true)
+  const [experimentGroup, setExperimentGroup] = useState<string | undefined>()
   const lat = useLocationStore((state) => state.lat)
   const lon = useLocationStore((state) => state.lon)
   const setRecommendedIds = useCatalogStore(
@@ -22,6 +24,9 @@ export function useRecommendations(initial: Restaurant[]) {
   )
 
   useEffect(() => {
+    const group = getABGroup()
+    setExperimentGroup(group || undefined)
+
     let active = true
     setLoading(true)
 
@@ -30,6 +35,7 @@ export function useRecommendations(initial: Restaurant[]) {
       lat,
       lon,
       turno: getCurrentTurno(),
+      experiment: group || undefined,
     })
       .then((items) => {
         if (!active) return
@@ -52,7 +58,7 @@ export function useRecommendations(initial: Restaurant[]) {
     return () => {
       active = false
     }
-  }, [lat, lon, setRecommendedIds])
+  }, [lat, lon, setRecommendedIds, experimentGroup])
 
-  return { recommended, loading }
+  return { recommended, loading, experimentGroup }
 }
