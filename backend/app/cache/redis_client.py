@@ -13,6 +13,14 @@ logger = logging.getLogger(__name__)
 _redis: redis.Redis | None = None
 SCORE_TTL_SECONDS = 86400
 
+RECOMMENDATION_METRIC_KEYS: dict[str, str] = {
+    "requests": "metrics:reco:requests",
+    "cache_hits": "metrics:reco:cache_hits",
+    "cache_misses": "metrics:reco:cache_misses",
+    "model_scores": "metrics:reco:model_scores",
+    "popularity_scores": "metrics:reco:popularity_scores",
+}
+
 
 async def get_redis() -> redis.Redis:
     global _redis
@@ -79,4 +87,54 @@ async def track_event(event_type: str, payload: dict[str, Any]) -> bool:
         return True
     except RedisError as exc:
         logger.warning("Falha ao publicar evento no Redis Stream: %s", exc)
+        return False
+
+
+async def increment_metrics(*names: str) -> bool:
+    """Incrementa contadores de recomendação em um único pipeline."""
+    keys = [
+        RECOMMENDATION_METRIC_KEYS[name]
+        for name in names
+        if name in RECOMMENDATION_METRIC_KEYS
+    ]
+    if not keys:
+        return False
+
+    try:
+        client = await get_redis()
+        async with client.pipeline(transaction=False) as pipeline:
+            for key in keys:
+                pipeline.incr(key)
+            await pipeline.execute()
+        return True
+    except RedisError as exc:
+        logger.warning("Falha ao incrementar métricas no Redis: %s", exc)
+        return False
+
+
+async def get_recommendation_metrics() -> dict[str, Any]:
+    """Lê os contadores acumulados e calcula a taxa de acerto do cache."""
+    metrics: dict[str, int] = {name: 0 for name in RECOMMENDATION_METRIC_KEYS}
+
+    try:
+        client = await get_redis()
+        values = await client.mget(list(RECOMMENDATION_METRIC_KEYS.values()))
+    except RedisError as exc:
+        logger.warning("Falha ao ler métricas do Redis: %s", exc)
+        return {"redis_available": False, "cache_hit_rate": 0.0, **metrics}
+
+    for name, value in zip(RECOMMENDATION_METRIC_KEYS, values, strict=True):
+        metrics[name] = int(value or 0)
+
+    requests = metrics["requests"]
+    hit_rate = round(metrics["cache_hits"] / requests, 4) if requests else 0.0
+    return {"redis_available": True, "cache_hit_rate": hit_rate, **metrics}
+
+
+async def ping_redis() -> bool:
+    try:
+        client = await get_redis()
+        return bool(await client.ping())
+    except RedisError as exc:
+        logger.warning("Redis indisponível: %s", exc)
         return False

@@ -21,6 +21,9 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - `CHANGELOG.md`
 - Batch scoring diário (`scripts/batch_score.py`) por usuário/turno com gravação no Redis
 - Migrações Alembic com schema inicial, comando `db:migrate` e baseline automático (`stamp head`) para bancos legados
+- Middleware com `X-Request-ID` e `X-Process-Time` e log estruturado de latência
+- Endpoint `/ready` para readiness de PostgreSQL, Redis e modelo
+- Endpoint `/api/v1/metrics/recommendations` com cache hit rate, modelo, popularidade e degradação graciosa sem Redis
 - Serviço `batch-scorer` no Docker Compose (profile `batch`) e scripts `batch:score`/`batch-score`
 - Endpoint `POST /api/v1/reviews` com `Idempotency-Key` e atualização transacional dos agregados
 - Detalhe do restaurante com as últimas 10 avaliações
@@ -28,7 +31,7 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Cache Redis com degradação graciosa, invalidação após treino e Redis Stream de eventos
 - Carregamento do modelo LightGBM no lifespan da API
 - Dataset de treino com `1 positivo : 3 negativos` e features leave-one-restaurant-out
-- 45 testes de backend (pytest) cobrindo features, contexto de turno, treino, batch scoring, migrações, modelo, PostGIS, schemas e API
+- 52 testes de backend (pytest) cobrindo features, contexto de turno, treino, batch scoring, migrações, métricas, readiness, modelo, PostGIS, schemas e API
 - `requirements-dev.txt`, `pytest.ini` e scripts `build`/`test` do backend
 
 ### Corrigido

@@ -3,8 +3,11 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import crud
+from app import main as main_module
+from app.api import metrics as metrics_api
 from app.api import recommendations as recommendations_api
 from app.database import get_db
 from app.main import app
@@ -186,3 +189,87 @@ def test_recommendations_without_turno_history_uses_popularity(monkeypatch) -> N
     assert response.status_code == 200
     assert writes == ["noite"]
     assert response.json()[0]["score"] == 1.0
+
+
+def test_request_id_and_process_time_headers() -> None:
+    with TestClient(app) as client:
+        response = client.get(
+            "/health",
+            headers={"X-Request-ID": "abc-123"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "abc-123"
+    assert response.headers["X-Process-Time"].endswith("ms")
+
+
+class _ReadySession:
+    async def execute(self, _statement):
+        return None
+
+
+class _BrokenSession:
+    async def execute(self, _statement):
+        raise SQLAlchemyError("database down")
+
+
+def test_ready_reports_dependencies(monkeypatch) -> None:
+    async def fake_ready_db():
+        yield _ReadySession()
+
+    async def fake_ping() -> bool:
+        return True
+
+    app.dependency_overrides[get_db] = fake_ready_db
+    monkeypatch.setattr(main_module, "ping_redis", fake_ping)
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["database"] is True
+    assert body["redis"] is True
+
+
+def test_ready_returns_503_when_database_is_down(monkeypatch) -> None:
+    async def fake_broken_db():
+        yield _BrokenSession()
+
+    async def fake_ping() -> bool:
+        return False
+
+    app.dependency_overrides[get_db] = fake_broken_db
+    monkeypatch.setattr(main_module, "ping_redis", fake_ping)
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["database"] is False
+    assert body["redis"] is False
+
+
+def test_recommendation_metrics_endpoint(monkeypatch) -> None:
+    async def fake_metrics():
+        return {
+            "redis_available": True,
+            "cache_hit_rate": 0.5,
+            "requests": 2,
+            "cache_hits": 1,
+            "cache_misses": 1,
+            "model_scores": 1,
+            "popularity_scores": 0,
+        }
+
+    monkeypatch.setattr(metrics_api, "get_recommendation_metrics", fake_metrics)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/metrics/recommendations")
+
+    assert response.status_code == 200
+    assert response.json()["cache_hit_rate"] == 0.5
+    assert response.json()["redis_available"] is True

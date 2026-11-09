@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud
-from app.cache.redis_client import clear_scores, get_scores, set_scores
+from app.cache.redis_client import (
+    clear_scores,
+    get_scores,
+    increment_metrics,
+    set_scores,
+)
 from app.core.constants import Turno
 from app.database import get_db
 from app.ml.features import build_user_features, has_turno_history
@@ -47,11 +52,15 @@ async def recommendations(
         ):
             user_features = build_user_features(orders, user)
             scores = recommender.predict_scores(user_features, nearby, turno)
+            await increment_metrics("requests", "cache_misses", "model_scores")
         else:
             # Cold start (sem histórico no turno): popularidade documentada.
             scores = popularity_scores(nearby)
+            await increment_metrics("requests", "cache_misses", "popularity_scores")
 
         await set_scores(str(user_id), turno, scores)
+    else:
+        await increment_metrics("requests", "cache_hits")
 
     for restaurant in nearby:
         restaurant.score = round(

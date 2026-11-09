@@ -18,6 +18,8 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
 | Método | Endpoint | Finalidade |
 |--------|----------|------------|
 | `GET` | `/health` | Health check + status do modelo |
+| `GET` | `/ready` | Readiness com PostgreSQL, Redis e modelo |
+| `GET` | `/api/v1/metrics/recommendations` | Contadores de cache, modelo e popularidade |
 | `GET` | `/api/v1/restaurants/search?lat=&lon=&radius_km=` | Busca geoespacial (PostGIS `ST_DWithin`) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante + últimas 10 avaliações |
 | `POST` | `/api/v1/reviews` | Cria avaliação com idempotência via `Idempotency-Key` |
@@ -107,6 +109,19 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 
 Bancos que foram criados pela versão anterior (`Base.metadata.create_all`) não possuem `alembic_version`. O `init_db.py` detecta a tabela `restaurants` e executa `stamp head` uma única vez antes de aplicar as migrações.
 
+## Observabilidade
+
+Toda resposta inclui `X-Request-ID` (recebido ou gerado) e `X-Process-Time` em milissegundos. O middleware registra método, rota, status, latência e request id no log.
+
+- `GET /health` é o liveness probe e informa se o modelo está carregado.
+- `GET /ready` retorna `503` apenas se o PostgreSQL estiver indisponível; Redis e modelo são degradáveis (a API continua servindo com fallback).
+- `GET /api/v1/metrics/recommendations` lê os contadores incrementados no Redis:
+  - `requests`, `cache_hits`, `cache_misses`;
+  - `model_scores` e `popularity_scores`;
+  - `cache_hit_rate` calculado sobre o total de requisições.
+
+As chaves ficam em `metrics:reco:*`. Se o Redis estiver fora, o endpoint responde com `redis_available: false` e zeros, sem derrubar a API.
+
 ## Seed
 
 O `scripts/init_db.py` é **idempotente** e popula:
@@ -126,7 +141,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic, métricas, readiness, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 
@@ -152,9 +167,10 @@ backend/
 │   │   ├── restaurants.py
 │   │   ├── reviews.py
 │   │   ├── recommendations.py
+│   │   ├── metrics.py          # contadores de cache/modelo
 │   │   └── events.py
 │   ├── cache/
-│   │   └── redis_client.py      # scores + Redis Stream de eventos
+│   │   └── redis_client.py      # scores, métricas e Redis Stream
 │   ├── core/
 │   │   ├── config.py
 │   │   └── constants.py

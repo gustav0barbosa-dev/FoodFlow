@@ -79,8 +79,9 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Serving com cache Redis** e fallback por popularidade para cold start.
 - ✅ **Batch scoring** por usuário/turno via `scripts/batch_score.py`, com agendamento por cron/Task Scheduler ou profile `batch` do Docker Compose.
 - ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
+- ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **45 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, query PostGIS, schemas e API.
+- ✅ **52 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas e API.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -287,7 +288,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Resultado esperado: `45 passed`.
+Resultado esperado: `52 passed`.
 
 5. **Verificação rápida da API.** Com a API rodando:
 
@@ -408,10 +409,11 @@ Frontend recebe lista ordenada por score
 - [x] Pipeline de treino LightGBM com seed de pedidos e avaliações
 - [x] Batch scoring diário por usuário/turno → Redis
 - [x] Migrations com Alembic e baseline automático do schema legado
+- [x] Métricas de latência, cache hit rate e readiness de dependências
 
 ### 🔄 Em andamento / Próximos passos
 - [ ] Integrar o frontend à API (substituir mocks por chamadas HTTP)
-- [ ] Monitoramento de latência e drift do recomendador
+- [ ] Monitoramento de drift do recomendador
 - [ ] Responsividade refinada para telas maiores
 
 ### 🎯 Longo prazo (LLMOps e portfólio)
