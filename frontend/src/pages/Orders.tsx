@@ -48,7 +48,7 @@ export function Orders() {
         </p>
       </header>
 
-      <div className="px-4 mt-4 mb-2">
+      <div className="px-4 mt-4 mb-2 sm:max-w-[700px] sm:mx-auto">
         <label htmlFor="pedidos-status-filtro" className="text-xs text-ink-soft block mb-1">
           Filtrar por status
         </label>

@@ -75,11 +75,11 @@ describe('api client', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toContain('/reviews')
     expect(init?.method).toBe('POST')
-    const headers = init?.headers
-    const idempotencyKey =
-      headers && typeof headers.get === 'function'
-        ? headers.get('Idempotency-Key')
-        : undefined
+    const rawHeaders = init?.headers
+    const headersObj = rawHeaders && !Array.isArray(rawHeaders) && !(rawHeaders instanceof Headers)
+      ? (rawHeaders as Record<string, string>)
+      : {}
+    const idempotencyKey = headersObj['Idempotency-Key']
     expect(idempotencyKey).toBe('idem-1')
     const body = JSON.parse(init?.body as string)
     expect(body.restaurant_id).toBe('r1')

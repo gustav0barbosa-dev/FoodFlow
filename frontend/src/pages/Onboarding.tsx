@@ -46,7 +46,7 @@ export function Onboarding() {
   }
 
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 bg-white">
+    <div className="h-full flex flex-col items-center justify-center p-8 bg-white sm:max-w-md sm:mx-auto">
       <div className="w-20 h-20 rounded-3xl bg-primary flex items-center justify-center text-white text-3xl font-bold mb-6">
         🍴
       </div>

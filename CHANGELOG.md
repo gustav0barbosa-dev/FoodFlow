@@ -40,6 +40,14 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `backend/scripts/drift_detect.py`: script CLI para detecção periódica de drift (cron/Task Scheduler)
   - `backend/scripts/drift_detect.py` adicionado ao `package.json` como `drift-detect`
 - Testes novos: `tests/test_drift_monitor.py` (monitor de drift), `tests/test_drift.py` (compute_psi com seed fixo)
+- Responsividade refinada para telas maiores:
+  - `frontend/src/components/layout/MobileFrame.tsx`: moldura de celular com largura responsiva (430px mobile, 640px tablet, 820px desktop), altura limitada a 92vh em telas maiores
+  - `frontend/src/components/layout/BottomNav.tsx`: bottom nav absoluto em mobile, não-absolute com fundo sutil e espaçamento em tablet/desktop
+  - `frontend/src/components/restaurant/RestaurantCard.tsx`: suporte a `className` para controle de largura em grids responsivos
+  - `frontend/src/pages/Home.tsx`: recomendados em grid 2-3 colunas (sm+/lg+), "Perto de você" em grid 2 colunas (sm+)
+  - `frontend/src/pages/RestaurantDetail.tsx`: container com largura limitada (700px), cardápio em grid 2 colunas (sm+)
+  - `frontend/src/pages/Search.tsx`, `Favorites.tsx`, `Orders.tsx`, `Profile.tsx`, `OrderDetail.tsx`: containers com largura limitada em telas maiores
+  - `frontend/src/pages/Onboarding.tsx`: largura limitada (sm:max-w-md)
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

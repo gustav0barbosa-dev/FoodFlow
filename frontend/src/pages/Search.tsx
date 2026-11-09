@@ -28,7 +28,7 @@ export function Search() {
         <SearchBar value={query} onChange={setQuery} autoFocus />
       </header>
 
-      <div className="px-4 mt-4">
+      <div className="px-4 mt-4 sm:max-w-[700px] sm:mx-auto">
         {!query && (
           <>
             <p className="text-sm font-medium text-ink mb-2">Buscas recentes</p>

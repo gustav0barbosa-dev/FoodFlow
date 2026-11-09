@@ -121,11 +121,11 @@ export function Cart() {
           description="Adicione itens de um restaurante para começar seu pedido."
           actionLabel="Explorar restaurantes"
           onAction={() => navigate('/home')}
-          className="flex-1"
+          className="flex-1 sm:max-w-[600px] sm:mx-auto"
         />
       ) : (
         <>
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 sm:max-w-[700px] sm:mx-auto">
             {groups.map((group) => (
               <section
                 key={group.restaurantId}

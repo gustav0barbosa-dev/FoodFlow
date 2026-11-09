@@ -22,7 +22,7 @@ export function Profile() {
         </div>
       </header>
 
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-3 sm:max-w-[700px] sm:mx-auto">
         <ProfileStats />
         <DietaryPreferences />
 

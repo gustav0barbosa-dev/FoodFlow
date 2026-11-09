@@ -17,6 +17,7 @@ import {
   sortRestaurants,
   type RestaurantSort,
 } from '@/lib/sort'
+import { cn } from '@/lib/utils'
 import { useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { useHomeSearchStore } from '@/store/homeSearchStore'
 import { useSortStore } from '@/store/sortStore'
@@ -124,10 +125,17 @@ export function Home() {
           Recomendados para você
         </h2>
         <p className="text-xs text-ink-soft mb-3">Baseado no seu histórico e horário</p>
-        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+        <div
+          className={cn(
+            // Mobile: carrossel horizontal.
+            'flex gap-3 overflow-x-auto no-scrollbar pb-2',
+            // Tablet/Desktop: grid de cards.
+            'sm:grid sm:grid-cols-2 lg:grid-cols-3 sm:gap-4 sm:pb-0'
+          )}
+        >
           {loading
             ? Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} variant="card" />
+                <Skeleton key={i} variant="card" className="w-60 sm:w-full" />
               ))
             : recommendedFiltered
                 .slice(0, recommendedLoadedCount)
@@ -137,6 +145,7 @@ export function Home() {
                     restaurant={r}
                     source="home_featured"
                     query={query}
+                    className="w-full"
                   />
                 ))}
         </div>
@@ -213,10 +222,17 @@ export function Home() {
             <option value="10">10 km</option>
           </select>
         </div>
-        <div className="space-y-3 mt-2">
+        <div
+          className={cn(
+            // Mobile: lista vertical.
+            'space-y-3 mt-2',
+            // Tablet/Desktop: grid de 2 colunas.
+            'sm:grid sm:grid-cols-2 sm:gap-3'
+          )}
+        >
           {loading
             ? Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} variant="card" />
+                <Skeleton key={i} variant="card" className="w-full" />
               ))
             : nearby.slice(0, loadedCount).map((r) => (
                 <RestaurantCompactCard

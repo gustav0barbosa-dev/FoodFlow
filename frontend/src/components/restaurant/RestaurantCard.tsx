@@ -11,11 +11,13 @@ export function RestaurantCard({
   size = 'lg',
   source = 'home_featured',
   query = '',
+  className,
 }: {
   restaurant: Restaurant
   size?: 'lg' | 'sm'
   source?: string
   query?: string
+  className?: string
 }) {
   const isLarge = size === 'lg'
   const trackEvent = useEventsStore((s) => s.trackEvent)
@@ -32,7 +34,7 @@ export function RestaurantCard({
     <div
       className={cn(
         'relative bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100',
-        isLarge ? 'w-60 shrink-0' : 'w-full'
+        className ?? (isLarge ? 'w-60 shrink-0' : 'w-full')
       )}
     >
       <Link

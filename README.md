@@ -414,7 +414,7 @@ Frontend recebe lista ordenada por score
 - [x] Monitoramento de drift do recomendador (PSI por feature, endpoint `/api/v1/drift`, script `drift_detect.py`)
 
 ### 🔄 Em andamento / Próximos passos
-- [ ] Responsividade refinada para telas maiores
+- [ ] Longo prazo (LLMOps e portfólio)
 
 ### 🎯 Longo prazo (LLMOps e portfólio)
 - [ ] Fine-tuning **LoRA** de LLM pequeno para re-ranking
@@ -445,7 +445,7 @@ Frontend recebe lista ordenada por score
 
 **Gustavo** — Software Developer.
 
-- 📧 [e-mail de contato]
+- 📧 [barbosa.silva.gustavo56@gmail.com]
 - 💼 [LinkedIn]
 - 🐙 [GitHub]
 
