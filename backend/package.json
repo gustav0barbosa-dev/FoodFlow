@@ -1,0 +1,11 @@
+{
+  "name": "foodflow-api",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FoodFlow Backend API (FastAPI + PostGIS + Redis)",
+  "scripts": {
+    "dev": "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "init-db": "python scripts/init_db.py"
+  },
+  "dependencies": {}
+}

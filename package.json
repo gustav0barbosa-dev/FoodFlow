@@ -8,6 +8,12 @@
     "build:web": "npm --prefix frontend run build",
     "test:web": "npm --prefix frontend test",
     "preview:web": "npm --prefix frontend run preview",
-    "lint:web": "npm --prefix frontend run lint"
+    "lint:web": "npm --prefix frontend run lint",
+    "dev:api": "npm --prefix backend run dev",
+    "build:api": "npm --prefix backend run build",
+    "test:api": "npm --prefix backend test",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:init": "cd backend && python scripts/init_db.py"
   }
 }
