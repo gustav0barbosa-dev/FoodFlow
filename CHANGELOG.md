@@ -56,6 +56,13 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `backend/requirements-llmops.txt`: dependências opcionais (transformers, peft, torch, huggingface_hub, safetensors)
   - `backend/scripts/drift_detect.py` adicionado ao `package.json` como `drift-detect`
 - Testes novos: `tests/test_reranker.py` (fallback, normalização, bônus por turno, instância global)
+- Deploy de produção:
+  - `backend/Dockerfile.prod`: imagem otimizada para produção (sem `--reload`, código empacotado)
+  - `docker-compose.prod.yml`: compose de produção (usa `Dockerfile.prod`, variáveis de ambiente via `.env`)
+  - `backend/.env.example`: variáveis de ambiente do backend (`DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`)
+  - `frontend/.env.example`: documentação de `VITE_API_URL` para desenvolvimento e produção
+  - Healthcheck do backend no `docker-compose.yml` (endpoint `/ready`)
+  - Endpoint `/api/v1/metrics` no formato Prometheus para scraping
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

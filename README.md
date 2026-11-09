@@ -280,6 +280,27 @@ Ou use o Python do venv diretamente:
 
 A API estará em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
+#### Deploy de produção (Docker Compose)
+
+Para rodar em produção, use o compose de produção junto com o base:
+
+```bash
+# Na raiz do projeto
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Defina as variáveis de ambiente antes de subir (ou crie um `.env` na raiz):
+
+```bash
+DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow
+REDIS_URL=redis://redis:6379/0
+CORS_ORIGINS=https://app.seudominio.com,https://www.seudominio.com
+```
+
+O build de produção usa `backend/Dockerfile.prod` (sem `--reload`, com o código empacotado na imagem) e aplica `init_db.py` (migrações + seed) na inicialização.
+
+O endpoint `/ready` pode ser usado como readiness proxy e `/api/v1/metrics` expõe métricas no formato Prometheus para scraping.
+
 4. **Rodar os testes.** Os testes não precisam de PostgreSQL nem Redis:
 
 ```powershell
@@ -288,7 +309,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Resultado esperado: `52 passed`.
+Resultado esperado: `83 passed`.
 
 5. **Verificação rápida da API.** Com a API rodando:
 

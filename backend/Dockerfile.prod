@@ -1,0 +1,42 @@
+# Dockerfile de produção do backend FoodFlow.
+#
+# Build:
+#   docker build -t foodflow-backend -f backend/Dockerfile.prod backend
+#
+# Execução:
+#   docker run -p 8000:8000 \
+#     -e DATABASE_URL=... \
+#     -e REDIS_URL=... \
+#     -e CORS_ORIGINS=... \
+#     foodflow-backend
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Dependências do sistema para psycopg2/geoalchemy2 (build-time apenas).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala dependências Python (camada em cache separada).
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Código da aplicação.
+COPY app ./app
+COPY scripts ./scripts
+COPY alembic ./alembic
+COPY alembic.ini .
+
+# Variáveis com valores seguros para produção (sobrescritas via env no runtime).
+ENV DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@localhost:5432/foodflow \
+    REDIS_URL=redis://localhost:6379/0 \
+    CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+# Aplica migrações e seed antes de subir a API (sem --reload em produção).
+CMD ["sh", "-c", "python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
