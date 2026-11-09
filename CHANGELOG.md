@@ -7,10 +7,29 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ### Alterado
 - Reorganização do repositório em monorepo: frontend movido para `frontend/`, documentação para `docs/`
+- Recomendador passou a compartilhar o mesmo feature engineering entre treino e serving, com scores normalizados em `[0, 1]`
+- Busca geoespacial agora calcula distância na mesma query (sem N+1) e usa binds nomeados
+- CORS passou a ler `CORS_ORIGINS` das configurações
+- README raiz e `backend/README.md` atualizados com o estado real do backend
 
 ### Adicionado
 - `package.json` raiz com scripts delegados
 - `CHANGELOG.md`
+- Endpoint `POST /api/v1/reviews` com `Idempotency-Key` e atualização transacional dos agregados
+- Detalhe do restaurante com as últimas 10 avaliações
+- Seed idempotente com 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações
+- Cache Redis com degradação graciosa, invalidação após treino e Redis Stream de eventos
+- Carregamento do modelo LightGBM no lifespan da API
+- Dataset de treino com `1 positivo : 3 negativos` e features leave-one-restaurant-out
+- 35 testes de backend (pytest) cobrindo features, treino, modelo, PostGIS, schemas e API
+- `requirements-dev.txt`, `pytest.ini` e scripts `build`/`test` do backend
+
+### Corrigido
+- `NameError` no endpoint de detalhe por falta de import de `UUID`
+- `NameError` no treino por falta de imports de `pandas` e `LGBMClassifier`
+- Incompatibilidade de features entre treino e inferência
+- Validação de `turno` e de tipos de evento via `Literal`
+- Mutável padrão em `EventIn.payload`
 
 ## [0.1.0-frontend] — 2026-11-08
 
