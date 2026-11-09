@@ -141,3 +141,20 @@ class Event(Base):
     )
 
     __table_args__ = (Index("idx_events_type_created_at", "type", "created_at"),)
+
+
+class RecommendationLog(Base):
+    __tablename__ = "recommendation_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), index=True
+    )
+    turno: Mapped[str] = mapped_column(String(20), index=True)
+    # Armazena as features do usuário e do contexto no momento da requisição
+    features: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
