@@ -75,10 +75,11 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Detalhe do restaurante** com últimas 10 avaliações agregadas.
 - ✅ **Avaliações idempotentes** via header `Idempotency-Key` e atualização transacional de `average_rating`/`review_count`.
 - ✅ **Coleta de eventos** em PostgreSQL + Redis Stream.
-- ✅ **Recomendação LightGBM** com features por turno, medoides ponderados por recência e `1 positivo : 3 negativos` no treino.
+- ✅ **Recomendação LightGBM** com features por turno (one-hot do turno solicitado), medoides ponderados por recência e `1 positivo : 3 negativos` no treino.
 - ✅ **Serving com cache Redis** e fallback por popularidade para cold start.
+- ✅ **Batch scoring** por usuário/turno via `scripts/batch_score.py`, com agendamento por cron/Task Scheduler ou profile `batch` do Docker Compose.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **35 testes automatizados** cobrindo features, treino, modelo, query PostGIS, schemas e API.
+- ✅ **42 testes automatizados** cobrindo features, treino, modelo, batch scoring, query PostGIS, schemas e API.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -197,15 +198,112 @@ Feche e reabra o terminal. Alternativa: use **Command Prompt (cmd)** no terminal
 
 ### Rodando o backend
 
+Com Docker Compose (recomendado):
+
 ```bash
 # Na raiz: sobe PostgreSQL/PostGIS, Redis e a API (seed automático)
 docker compose up -d
+```
 
-# Alternativa local
-cd backend
+Alternativa local:
+
+1. **Criar banco e extensão PostGIS.** Abra o `psql` como superusuário:
+
+```sql
+psql -U postgres
+CREATE ROLE foodflow LOGIN PASSWORD 'foodflow';
+CREATE DATABASE foodflow OWNER foodflow;
+\connect foodflow
+CREATE EXTENSION IF NOT EXISTS postgis;
+\q
+```
+
+Se o PostGIS não estiver instalado no PostgreSQL local, instale pelo Stack Builder do instalador do PostgreSQL. Verifique a conexão:
+
+```bash
+pg_isready -U foodflow -d foodflow
+```
+
+2. **Subir o Redis (opcional).** No WSL:
+
+```bash
+wsl sudo service redis-server start
+wsl redis-cli ping
+```
+
+Resposta esperada: `PONG`. Se não quiser subir o Redis agora, pule esta etapa.
+
+3. **Rodar o backend:**
+
+```powershell
+cd C:\Users\gsilva\Documents\FoodFlow\backend
+
+# Criar o ambiente virtual com Python 3.11
+py -3.11 -m venv .venv
+
+# Ativar (se o PowerShell bloquear, veja a observação abaixo)
+.\.venv\Scripts\Activate.ps1
+
+# Instalar dependências
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+
+# Criar o .env local
+Copy-Item .env.example .env
+
+# Criar tabelas e rodar o seed idempotente
 python scripts/init_db.py
-uvicorn app.main:app --reload
+
+# Subir a API
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Saída esperada do seed:
+
+```text
+✅ Banco inicializado: {'restaurants': 12, 'users': 4, 'orders_created': 30, 'reviews_created': 36}
+```
+
+Se o PowerShell bloquear a ativação:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Ou use o Python do venv diretamente:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+A API estará em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
+
+4. **Rodar os testes.** Os testes não precisam de PostgreSQL nem Redis:
+
+```powershell
+cd C:\Users\gsilva\Documents\FoodFlow\backend
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Resultado esperado: `42 passed`.
+
+5. **Verificação rápida da API.** Com a API rodando:
+
+```bash
+curl.exe http://localhost:8000/health
+
+curl.exe "http://localhost:8000/api/v1/restaurants/search?lat=-23.5325&lon=-46.7939&radius_km=5"
+
+# Treinar o modelo com os pedidos do seed
+curl.exe -X POST "http://localhost:8000/api/v1/recommendations/train"
+
+# Testar recomendação para a usuária Ana Souza
+curl.exe "http://localhost:8000/api/v1/recommendations?user_id=a54a52c3-8543-56d3-8e4b-6d8220667bd5&lat=-23.5325&lon=-46.7939&turno=tarde"
+
+# Calcular/gravar scores em lote para todos os usuários e turnos
+cd C:\Users\gsilva\Documents\FoodFlow\backend
+.\.venv\Scripts\python.exe scripts\batch_score.py
 ```
 
 Documentação interativa: **`http://localhost:8000/docs`**.
@@ -221,6 +319,7 @@ Documentação interativa: **`http://localhost:8000/docs`**.
 | `npm run test:api` | Testes do backend (pytest) |
 | `npm run db:up` / `db:down` | Sobe/derruba os serviços Docker |
 | `npm run db:init` | Cria tabelas e roda o seed |
+| `npm run batch:score` | Calcula e grava os scores de recomendação no Redis |
 
 ---
 
@@ -257,7 +356,7 @@ Avatar, dados do usuário, preferências alimentares (Vegano, Vegetariano, etc.)
 
 ## 🧠 Arquitetura de IA (backend)
 
-O backend já implementa o caminho de eventos, treino, serving e cache. O que falta é o job agendado de batch scoring e a integração do frontend:
+O backend já implementa o caminho de eventos, treino, serving, cache e batch scoring. O que falta é a integração do frontend:
 
 ```
 Eventos do app (cliques, pedidos, avaliações)
@@ -273,7 +372,7 @@ API /recommendations (FastAPI/NestJS) lê scores do Redis
 Frontend recebe lista ordenada por score
 ```
 
-**Implementado no MVP:** busca PostGIS, coleta de eventos, features por turno, treino LightGBM, serving com cache Redis e fallback por popularidade.
+**Implementado no MVP:** busca PostGIS, coleta de eventos, features por turno, treino LightGBM, serving com cache Redis, fallback por popularidade e batch scoring por usuário/turno.
 
 **LLMs no fluxo (diferencial AI Engineer — roadmap):**
 - Enriquecimento de features com embeddings (descrições de menu + reviews).
@@ -305,10 +404,10 @@ Frontend recebe lista ordenada por score
 - [x] Coleta de eventos (`POST /events`) em PostgreSQL + Redis Stream
 - [x] Endpoint `/recommendations` com LightGBM e fallback por popularidade
 - [x] Pipeline de treino LightGBM com seed de pedidos e avaliações
+- [x] Batch scoring diário por usuário/turno → Redis
 
 ### 🔄 Em andamento / Próximos passos
 - [ ] Integrar o frontend à API (substituir mocks por chamadas HTTP)
-- [ ] Batch scoring diário agendado (hoje é lazy + cache Redis)
 - [ ] Migrations com Alembic (hoje `create_all` + DDL incremental)
 - [ ] Monitoramento de latência e drift do recomendador
 - [ ] Responsividade refinada para telas maiores
