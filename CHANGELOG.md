@@ -73,6 +73,24 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - `frontend/src/pages/Home.tsx`: exibe o grupo A/B ativo na seção de recomendados
   - `frontend/src/pages/Profile.tsx`: seletor de grupo A/B (padrão/personalizado/distância) e painel de resultados acumulados
   - `frontend/.env.example`: variável `VITE_AB_GROUP`
+- Aplicativo móvel React Native + Expo (`mobile/`):
+  - `mobile/app.json`: configuração do app (nome FoodFlow, ícone, splash, plugins expo-router/expo-localization/expo-font)
+  - `mobile/src/app/index.tsx`: tela de Onboarding com geolocalização via `expo-location`
+  - `mobile/src/app/(tabs)/_layout.tsx`: navegação por abas com Expo Router (Início, Buscar, Pedidos, Perfil)
+  - `mobile/src/app/(tabs)/index.tsx`: tela Home com recomendados, "Perto de você", busca e carrinho
+  - `mobile/src/app/(tabs)/buscar.tsx`: tela Buscar com buscas recentes e resultados
+  - `mobile/src/app/(tabs)/pedidos.tsx`: tela Pedidos com histórico
+  - `mobile/src/app/(tabs)/perfil.tsx`: tela Perfil com preferências e experimento A/B
+  - `mobile/src/app/restaurante/[id].tsx`: tela Detalhe do Restaurante com cardápio e informações
+  - `mobile/src/app/sacola.tsx`: tela Sacola com itens, grupos por restaurante e finalização
+  - `mobile/src/app/favoritos.tsx`: tela Favoritos (via tab)
+  - `mobile/src/lib/api.ts`: cliente HTTP tipado com todos os endpoints da API
+  - `mobile/src/lib/config.ts`: configuração com variáveis `EXPO_PUBLIC_*`
+  - `mobile/src/lib/catalog.ts`: mapeamento API → tipos do frontend
+  - `mobile/src/lib/dietary.ts`, `mobile/src/lib/search.ts`, `mobile/src/lib/format.ts`, `mobile/src/lib/events.ts`, `mobile/src/lib/utils.ts`: utilitários
+  - `mobile/src/store/`: Zustand stores (catalog, cart, favorites, location, orders, preferences, reviews, events, address)
+  - `mobile/src/data/mockData.ts`: 12 restaurantes com cardápio e avaliações
+  - `mobile/src/types/index.ts`: tipos TypeScript compartilhados
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

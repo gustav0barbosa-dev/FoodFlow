@@ -443,7 +443,7 @@ Frontend recebe lista ordenada por score
 - [ ] Fine-tuning **LoRA** de LLM pequeno para re-ranking
 - [ ] Publicação do adapter no **Hugging Face Hub**
 - [ ] Deploy do backend (AWS/GCP) com monitoramento
-- [ ] Migração do protótipo para **React Native + Expo** (app nativo)
+- [x] Migração do protótipo para **React Native + Expo** (app nativo)
 - [ ] Artigo técnico publicado (Medium/dev.to) explicando a arquitetura
 
 ---
