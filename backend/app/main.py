@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import events, metrics, recommendations, restaurants, reviews
+from app.api import drift, events, metrics, recommendations, restaurants, reviews
 from app.cache.redis_client import close_redis, ping_redis
 from app.core.config import settings
 from app.database import get_db
@@ -46,6 +46,7 @@ app.include_router(restaurants.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
 app.include_router(recommendations.router, prefix="/api/v1")
+app.include_router(drift.router, prefix="/api/v1")
 app.include_router(metrics.router, prefix="/api/v1")
 
 

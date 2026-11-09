@@ -8,6 +8,7 @@
     "init-db": "python scripts/init_db.py",
     "migrate": "python -m alembic upgrade head",
     "batch-score": "python scripts/batch_score.py",
+    "drift-detect": "python scripts/drift_detect.py",
     "build": "python -m compileall -q app scripts",
     "test": "python -m pytest"
   },

@@ -46,7 +46,7 @@ export function Favorites() {
           className="pt-24"
         />
       ) : (
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3 sm:max-w-[700px] sm:mx-auto">
           {favorites.map((restaurant) => (
             <RestaurantCompactCard
               key={restaurant.id}

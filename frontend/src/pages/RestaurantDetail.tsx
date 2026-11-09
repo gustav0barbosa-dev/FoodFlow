@@ -16,6 +16,7 @@ import { deleteReview, getRestaurant } from '@/lib/api'
 import { mapApiRestaurantDetail } from '@/lib/catalog'
 import { API_USER_ID, isUuid } from '@/lib/config'
 import { formatBRL } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import type { Restaurant } from '@/types'
 
 export function RestaurantDetail() {
@@ -137,7 +138,13 @@ export function RestaurantDetail() {
   }
 
   return (
-    <div className="h-full overflow-y-auto pb-24 bg-white">
+    <div
+      className={cn(
+        'h-full overflow-y-auto pb-24 bg-white',
+        // Tablet/Desktop: não esticar conteúdo em telas largas.
+        'sm:max-w-[700px] sm:mx-auto'
+      )}
+    >
       {/* Hero */}
       <div className="relative">
         <img src={restaurant.image} alt={restaurant.name} className="w-full h-52 object-cover" />
@@ -242,14 +249,23 @@ export function RestaurantDetail() {
         <div className="mt-3">
           {tab === 'menu' &&
             (restaurant.menu.length > 0 ? (
-              restaurant.menu.map((item) => (
-                <MenuItem
-                  key={item.id}
-                  item={item}
-                  restaurantId={restaurant.id}
-                  restaurantName={restaurant.name}
-                />
-              ))
+              <div
+                className={cn(
+                  // Mobile: lista vertical.
+                  'space-y-2',
+                  // Tablet/Desktop: grid de 2 colunas.
+                  'sm:grid sm:grid-cols-2 sm:gap-3'
+                )}
+              >
+                {restaurant.menu.map((item) => (
+                  <MenuItem
+                    key={item.id}
+                    item={item}
+                    restaurantId={restaurant.id}
+                    restaurantName={restaurant.name}
+                  />
+                ))}
+              </div>
             ) : (
               <p className="text-xs text-ink-soft text-center py-4">
                 Cardápio indisponível no momento.

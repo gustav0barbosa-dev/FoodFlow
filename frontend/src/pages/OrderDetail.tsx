@@ -71,7 +71,7 @@ export function OrderDetail() {
         </div>
       </header>
 
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-3 sm:max-w-[700px] sm:mx-auto">
         <section className="bg-white rounded-2xl p-4 border border-gray-100">
           <div className="flex items-start justify-between gap-2">
             <h2 className="font-semibold text-ink">{orderRestaurantLabel(order)}</h2>
