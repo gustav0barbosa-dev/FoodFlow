@@ -154,6 +154,46 @@ async def create_review(
     return review, True
 
 
+async def get_review(
+    session: AsyncSession,
+    review_id: UUID,
+) -> Review | None:
+    result = await session.execute(select(Review).where(Review.id == review_id))
+    return result.scalars().first()
+
+
+async def update_review(
+    session: AsyncSession,
+    review: Review,
+    rating: int,
+    comment: str | None,
+) -> Review:
+    """Atualiza a avaliação e recalcula os agregados do restaurante."""
+    restaurant = await get_restaurant(session, review.restaurant_id)
+    review.rating = rating
+    review.comment = comment
+    if restaurant is not None:
+        await refresh_restaurant_rating(session, restaurant)
+
+    await session.commit()
+    await session.refresh(review)
+    return review
+
+
+async def delete_review(
+    session: AsyncSession,
+    review: Review,
+) -> None:
+    """Remove a avaliação e recalcula os agregados do restaurante."""
+    restaurant = await get_restaurant(session, review.restaurant_id)
+    await session.delete(review)
+    await session.flush()
+    if restaurant is not None:
+        await refresh_restaurant_rating(session, restaurant)
+
+    await session.commit()
+
+
 async def create_event(
     session: AsyncSession,
     event_type: str,

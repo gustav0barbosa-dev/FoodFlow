@@ -1,12 +1,13 @@
 import { ChevronLeft, Heart } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { restaurants } from '@/data/mockData'
+import { useCatalog } from '@/hooks/useCatalog'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
 import { EmptyState } from '@/components/common/EmptyState'
 
 export function Favorites() {
   const navigate = useNavigate()
+  const { restaurants } = useCatalog()
   const favoriteIds = useFavoritesStore((s) => s.favoriteIds)
   const favorites = restaurants.filter((restaurant) =>
     favoriteIds.includes(restaurant.id)

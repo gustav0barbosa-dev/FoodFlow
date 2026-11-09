@@ -414,7 +414,7 @@ export const categories = [
 ]
 
 export const currentUser = {
-  name: 'Ana Silva',
-  email: 'ana@email.com',
+  name: 'Ana Souza',
+  email: 'ana.souza@foodflow.dev',
   location: 'Osasco, SP',
 }

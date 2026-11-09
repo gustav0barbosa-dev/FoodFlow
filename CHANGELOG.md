@@ -17,22 +17,22 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - README raiz e `backend/README.md` atualizados com o estado real do backend
 
 ### Adicionado
-- `package.json` raiz com scripts delegados
-- `CHANGELOG.md`
-- Batch scoring diário (`scripts/batch_score.py`) por usuário/turno com gravação no Redis
-- Migrações Alembic com schema inicial, comando `db:migrate` e baseline automático (`stamp head`) para bancos legados
-- Middleware com `X-Request-ID` e `X-Process-Time` e log estruturado de latência
-- Endpoint `/ready` para readiness de PostgreSQL, Redis e modelo
-- Endpoint `/api/v1/metrics/recommendations` com cache hit rate, modelo, popularidade e degradação graciosa sem Redis
-- Serviço `batch-scorer` no Docker Compose (profile `batch`) e scripts `batch:score`/`batch-score`
-- Endpoint `POST /api/v1/reviews` com `Idempotency-Key` e atualização transacional dos agregados
-- Detalhe do restaurante com as últimas 10 avaliações
-- Seed idempotente com 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações
-- Cache Redis com degradação graciosa, invalidação após treino e Redis Stream de eventos
-- Carregamento do modelo LightGBM no lifespan da API
-- Dataset de treino com `1 positivo : 3 negativos` e features leave-one-restaurant-out
-- 52 testes de backend (pytest) cobrindo features, contexto de turno, treino, batch scoring, migrações, métricas, readiness, modelo, PostGIS, schemas e API
-- `requirements-dev.txt`, `pytest.ini` e scripts `build`/`test` do backend
+- Integração frontend ↔ API FastAPI:
+  - `frontend/src/lib/api.ts`: cliente HTTP tipado com timeout, fallback e `ApiError`
+  - `frontend/src/lib/config.ts`: `VITE_API_URL`, `VITE_USER_ID`, coordenadas padrão, derivação de turno
+  - `frontend/src/lib/catalog.ts`: mapeamento API → tipos do frontend, enriquecimento com mock
+  - `frontend/src/store/catalogStore.ts`: catálogo via API com fallback para mock
+  - `frontend/src/store/locationStore.ts`: localização persistida (geolocalização ou Osasco/SP padrão)
+  - `frontend/src/hooks/useCatalog.ts`, `useRecommendations.ts`, `useRestaurantSearch.ts`
+  - `frontend/src/store/favoritesStore.ts`: migração de IDs mock → UUIDs da API
+  - `frontend/src/store/eventsStore.ts`: `trackEvent` envia `POST /events` (best-effort)
+  - `frontend/src/store/reviewsStore.ts`: `saveReview` sincroniza avaliações locais com a API
+  - `frontend/src/pages/Home.tsx`, `Search.tsx`, `Favorites.tsx`, `RestaurantDetail.tsx`, `Onboarding.tsx`
+  - `frontend/src/components/restaurant/UserReviewForm.tsx`: create/update/delete via API
+  - `frontend/.env.example` e `src/vite-env.d.ts`: variáveis de ambiente e types do Vite
+- Testes novos: `src/lib/api.test.ts` (7), `src/lib/catalog.test.ts` (8), `src/lib/config.test.ts` (5)
+- 132 testes do frontend passando; build de produção OK
+- Endpoints `PUT /api/v1/reviews/{review_id}` e `DELETE /api/v1/reviews/{review_id}` no backend
 
 ### Corrigido
 - `NameError` no endpoint de detalhe por falta de import de `UUID`

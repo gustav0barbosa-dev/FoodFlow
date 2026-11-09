@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { sendEvent } from '@/lib/api'
 
 export type EventType =
   | 'restaurant_card_clicked'
@@ -42,8 +43,12 @@ export const useEventsStore = create<EventsState>()(
           createdAt: new Date().toISOString(),
         }
 
-        // Mock transport: with a backend, this event would be sent via POST /events.
+        // O histórico local continua disponível; a API recebe uma cópia.
         set({ events: [event, ...get().events].slice(0, MAX_EVENTS) })
+
+        void sendEvent(type, payload).catch(() => {
+          // Eventos são best-effort; a UI não deve bloquear sem API.
+        })
       },
 
       clearEvents: () => set({ events: [] }),

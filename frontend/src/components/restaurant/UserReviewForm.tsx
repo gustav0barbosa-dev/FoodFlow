@@ -1,12 +1,17 @@
 import { Star } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { currentUser } from '@/data/mockData'
+import { createReview, updateReview } from '@/lib/api'
+import { mapApiReview } from '@/lib/catalog'
+import { API_USER_ID, isUuid } from '@/lib/config'
 import { useEventsStore } from '@/store/eventsStore'
-import { useReviewsStore } from '@/store/reviewsStore'
+import { useReviewsStore, type UserReview } from '@/store/reviewsStore'
 import { cn } from '@/lib/utils'
 
 interface UserReviewFormProps {
   restaurantId: string
+  reviewId?: string
   onReviewSubmitted: () => void
   initialRating?: number
   initialComment?: string
@@ -14,6 +19,7 @@ interface UserReviewFormProps {
 
 export function UserReviewForm({
   restaurantId,
+  reviewId,
   onReviewSubmitted,
   initialRating,
   initialComment,
@@ -23,7 +29,8 @@ export function UserReviewForm({
   const [isEditing, setIsEditing] = useState(!!(initialRating ?? initialComment))
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const addReview = useReviewsStore((s) => s.addReview)
-  const updateReview = useReviewsStore((s) => s.updateReview)
+  const updateReviewLocal = useReviewsStore((s) => s.updateReview)
+  const saveReview = useReviewsStore((s) => s.saveReview)
 
   useEffect(() => {
     if (initialRating !== undefined) setRating(initialRating)
@@ -39,8 +46,21 @@ export function UserReviewForm({
       return
     }
 
-    if (isEditing) {
-      updateReview(restaurantId, rating, comment)
+    const editing = isEditing && !!reviewId
+    const localReview: UserReview = {
+      id:
+        editing && reviewId
+          ? reviewId
+          : `u${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      userName: currentUser.name,
+      rating,
+      date: new Date().toISOString(),
+      comment,
+      restaurantId,
+    }
+
+    if (editing) {
+      updateReviewLocal(restaurantId, rating, comment)
       trackEvent('review_submitted', {
         restaurantId,
         rating: String(rating),
@@ -54,6 +74,28 @@ export function UserReviewForm({
         rating: String(rating),
       })
       toast.success('Avaliação enviada com sucesso')
+    }
+
+    // Mantém a avaliação otimista e sincroniza com a API quando disponível.
+    saveReview(localReview)
+
+    if (isUuid(restaurantId) && isUuid(API_USER_ID)) {
+      const request = editing && reviewId && isUuid(reviewId)
+        ? updateReview(reviewId, { userId: API_USER_ID, rating, comment })
+        : createReview({
+            restaurantId,
+            userId: API_USER_ID,
+            rating,
+            comment,
+          }, `review-${restaurantId}-${Date.now()}`)
+
+      void request
+        .then((review) => {
+          saveReview({ ...mapApiReview(review), restaurantId })
+        })
+        .catch(() => {
+          // Sem API, a avaliação local continua disponível.
+        })
     }
 
     onReviewSubmitted()

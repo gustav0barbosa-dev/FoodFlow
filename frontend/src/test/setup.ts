@@ -11,6 +11,9 @@ import { DEFAULT_RESTAURANT_SORT, useSortStore } from '@/store/sortStore'
 import { DEFAULT_HOME_CATEGORY, DEFAULT_HOME_FILTER, useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { DEFAULT_ORDER_STATUS_FILTER, useOrderStatusFilterStore } from '@/store/orderStatusFilterStore'
 import { DEFAULT_HOME_SEARCH_QUERY, useHomeSearchStore } from '@/store/homeSearchStore'
+import { DEFAULT_LOCATION, useLocationStore } from '@/store/locationStore'
+import { resetCatalogStore } from '@/store/catalogStore'
+import { useReviewsStore } from '@/store/reviewsStore'
 
 afterEach(() => {
   cleanup()
@@ -23,6 +26,9 @@ beforeEach(() => {
   useFavoritesStore.setState({ favoriteIds: [] })
   usePreferencesStore.setState({ preferences: [] })
   useAddressStore.setState({ address: DEFAULT_ADDRESS })
+  useLocationStore.setState(DEFAULT_LOCATION)
+  resetCatalogStore()
+  useReviewsStore.setState({ reviews: [] })
   useEventsStore.setState({ events: [] })
   useEventFiltersStore.setState({ type: 'all', period: 'all' })
   useSortStore.setState({ sort: DEFAULT_RESTAURANT_SORT })

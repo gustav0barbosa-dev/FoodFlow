@@ -10,6 +10,7 @@ export interface UserReview extends Review {
 interface ReviewsState {
   reviews: UserReview[]
   addReview: (restaurantId: string, rating: number, comment: string) => void
+  saveReview: (review: UserReview) => void
   updateReview: (restaurantId: string, rating: number, comment: string) => void
   removeReview: (restaurantId: string) => void
   getReviewsForRestaurant: (restaurantId: string) => Review[]
@@ -33,6 +34,13 @@ export const useReviewsStore = create<ReviewsState>()(
         }
 
         set({ reviews: [review, ...get().reviews] })
+      },
+
+      saveReview: (review) => {
+        const others = get().reviews.filter(
+          (item) => item.restaurantId !== review.restaurantId
+        )
+        set({ reviews: [review, ...others] })
       },
 
       updateReview: (restaurantId, rating, comment) => {

@@ -12,6 +12,7 @@ export interface Review {
   rating: number
   date: string
   comment: string
+  userId?: string
 }
 
 export const DIETARY_PREFERENCES = [

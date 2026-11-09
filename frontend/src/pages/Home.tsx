@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ShoppingCart, MapPin } from 'lucide-react'
-import { restaurants, categories, currentUser } from '@/data/mockData'
+import { categories, currentUser } from '@/data/mockData'
 import { useCartStore } from '@/store/cartStore'
+import { useLocationStore } from '@/store/locationStore'
 import { RestaurantCard } from '@/components/restaurant/RestaurantCard'
 import { RestaurantCompactCard } from '@/components/restaurant/RestaurantCompactCard'
 import { CategoryChip } from '@/components/restaurant/CategoryChip'
@@ -19,11 +20,16 @@ import {
 import { useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { useHomeSearchStore } from '@/store/homeSearchStore'
 import { useSortStore } from '@/store/sortStore'
+import { useCatalog } from '@/hooks/useCatalog'
+import { useRecommendations } from '@/hooks/useRecommendations'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
 
 export function Home() {
   const navigate = useNavigate()
   const count = useCartStore((s) => s.count())
+  const { restaurants } = useCatalog()
+  const { recommended } = useRecommendations(restaurants)
+  const locationLabel = useLocationStore((s) => s.label)
   const [loading, setLoading] = useState(true)
   const sort = useSortStore((s) => s.sort)
   const setSort = useSortStore((s) => s.setSort)
@@ -48,10 +54,16 @@ export function Home() {
     return () => clearTimeout(t)
   }, [])
 
+  const matchesFilter = (restaurant: (typeof restaurants)[number]) =>
+    filter === 'Todos' ||
+    restaurant.tags.some((tag) =>
+      tag.toLowerCase().includes(filter.toLowerCase())
+    )
+
   const searched = filterRestaurants(restaurants, query)
-  const filtered = searched.filter(
-    (r) =>
-      filter === 'Todos' || r.tags.some((t) => t.toLowerCase().includes(filter.toLowerCase()))
+  const filtered = searched.filter(matchesFilter)
+  const recommendedFiltered = filterRestaurants(recommended, query).filter(
+    matchesFilter
   )
 
   const nearby = sortRestaurants(
@@ -77,7 +89,7 @@ export function Home() {
             <p className="text-xs text-ink-soft">Olá, {currentUser.name.split(' ')[0]} 👋</p>
             <div className="flex items-center gap-1 text-sm font-medium text-ink">
               <MapPin size={14} className="text-primary" />
-              {currentUser.location}
+              {locationLabel}
             </div>
           </div>
           <button
@@ -117,8 +129,7 @@ export function Home() {
             ? Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} variant="card" />
               ))
-            : filtered
-                .filter((r) => r.isRecommended)
+            : recommendedFiltered
                 .slice(0, recommendedLoadedCount)
                 .map((r) => (
                   <RestaurantCard
@@ -130,7 +141,7 @@ export function Home() {
                 ))}
         </div>
         {!loading &&
-          filtered.filter((r) => r.isRecommended).length > recommendedLoadedCount && (
+          recommendedFiltered.length > recommendedLoadedCount && (
           <button
             type="button"
             onClick={() =>
@@ -139,10 +150,8 @@ export function Home() {
             className="mt-3 w-full py-2.5 rounded-xl border border-gray-200 bg-white text-sm font-medium text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             Carregar mais ·{' '}
-            {filtered.filter((r) => r.isRecommended).length -
-              recommendedLoadedCount}
-            restante{filtered.filter((r) => r.isRecommended).length -
-              recommendedLoadedCount !== 1
+            {recommendedFiltered.length - recommendedLoadedCount}
+            restante{recommendedFiltered.length - recommendedLoadedCount !== 1
               ? 's'
               : ''}
           </button>

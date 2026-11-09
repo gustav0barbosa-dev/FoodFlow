@@ -2,7 +2,7 @@
 
 Projeto de portfólio construído para a vaga de **Estágio/Residência em AI Engineer** no iFood. O objetivo é desenvolver um app de delivery mobile-first (inspirado em iFood, 99Food e Keeta) com **busca de restaurantes por proximidade** e um **sistema de recomendação personalizado** que aprende as preferências do usuário — análogo ao sistema **Red** do iFood.
 
-> ⚠️ **Status atual:** frontend MVP e backend MVP (Fase 1/2) implementados. O frontend ainda consome dados mockados; a integração com a API e o pipeline de LLMOps são os próximos passos. Este README documenta o que já foi entregue e o que vem a seguir.
+> ⚠️ **Status atual:** frontend MVP e backend MVP (Fase 1/2) implementados. O frontend está integrado à API FastAPI com fallback para mocks quando a API está indisponível; o pipeline de LLMOps é o próximo passo. Este README documenta o que já foi entregue e o que vem a seguir.
 
 ---
 
@@ -81,7 +81,7 @@ App **funcional e navegável** construído do zero com:
 - ✅ **Migrations versionadas** com Alembic, incluindo baseline automático para bancos criados via `create_all`.
 - ✅ **Observabilidade**: request id, latência por requisição, readiness de PostgreSQL/Redis e métricas de cache hit rate.
 - ✅ **Seed idempotente**: 12 restaurantes, 4 usuários, 30 pedidos e 36 avaliações.
-- ✅ **52 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas e API.
+- ✅ **55 testes automatizados** cobrindo features, treino, modelo, batch scoring, migrações, métricas, readiness, query PostGIS, schemas e API.
 
 📄 Detalhes em [`backend/README.md`](backend/README.md).
 
@@ -316,7 +316,7 @@ Documentação interativa: **`http://localhost:8000/docs`**.
 |---|---|
 | `npm run dev:web` | Frontend em modo desenvolvimento |
 | `npm run build:web` | Build de produção do frontend |
-| `npm run test:web` | Testes do frontend (Vitest) |
+| `npm run test:web` | Testes do frontend (Vitest) — 132 testes passando |
 | `npm run dev:api` | API FastAPI local |
 | `npm run test:api` | Testes do backend (pytest) |
 | `npm run db:up` / `db:down` | Sobe/derruba os serviços Docker |
@@ -409,10 +409,10 @@ Frontend recebe lista ordenada por score
 - [x] Pipeline de treino LightGBM com seed de pedidos e avaliações
 - [x] Batch scoring diário por usuário/turno → Redis
 - [x] Migrations com Alembic e baseline automático do schema legado
-- [x] Métricas de latência, cache hit rate e readiness de dependências
+- [x] Integrar o frontend à API (substituir mocks por chamadas HTTP)
+- [x] Endpoints `PUT` e `DELETE` de `/api/v1/reviews/{id}` para edição e remoção de avaliações
 
 ### 🔄 Em andamento / Próximos passos
-- [ ] Integrar o frontend à API (substituir mocks por chamadas HTTP)
 - [ ] Monitoramento de drift do recomendador
 - [ ] Responsividade refinada para telas maiores
 

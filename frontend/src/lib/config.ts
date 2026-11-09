@@ -1,0 +1,51 @@
+/** Configuração de integração do frontend com a API do FoodFlow. */
+
+export type Turno = 'manha' | 'tarde' | 'noite' | 'madrugada'
+
+function readNumber(value: string | undefined, fallback: number) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1'
+
+export const API_BASE_URL = apiUrl.replace(/\/+$/, '')
+
+/** Usuário demo do seed: Ana Souza. */
+export const DEFAULT_USER_ID =
+  import.meta.env.VITE_USER_ID ?? 'a54a52c3-8543-56d3-8e4b-6d8220667bd5'
+
+export const DEFAULT_LATITUDE = readNumber(
+  import.meta.env.VITE_DEFAULT_LAT,
+  -23.5325
+)
+
+export const DEFAULT_LONGITUDE = readNumber(
+  import.meta.env.VITE_DEFAULT_LON,
+  -46.7939
+)
+
+export const DEFAULT_LOCATION_LABEL =
+  import.meta.env.VITE_DEFAULT_LOCATION ?? 'Osasco, SP'
+
+export const API_USER_ID = DEFAULT_USER_ID
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+export function isUuid(value: string | undefined | null): value is string {
+  return !!value && UUID_PATTERN.test(value)
+}
+
+/**
+ * Deriva o turno a partir do horário de Brasília (UTC-3).
+ * O backend não modela fuso no navegador, então usamos o offset fixo do seed.
+ */
+export function getCurrentTurno(date: Date = new Date()): Turno {
+  const hour = (date.getUTCHours() - 3 + 24) % 24
+
+  if (hour >= 5 && hour < 12) return 'manha'
+  if (hour >= 12 && hour < 18) return 'tarde'
+  if (hour >= 18) return 'noite'
+  return 'madrugada'
+}

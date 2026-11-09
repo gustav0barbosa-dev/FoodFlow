@@ -60,6 +60,12 @@ class ReviewCreate(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class ReviewUpdate(BaseModel):
+    user_id: UUID
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
 class EventIn(BaseModel):
     type: EventType
     payload: dict[str, Any] = Field(default_factory=dict)

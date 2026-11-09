@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud
 from app.database import get_db
 from app.models import Review, User
-from app.schemas import ReviewCreate, ReviewOut
+from app.schemas import ReviewCreate, ReviewOut, ReviewUpdate
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
 
@@ -59,3 +61,52 @@ async def create_review(
         response.status_code = 200
 
     return _to_out(review, user)
+
+
+@router.put("/{review_id}", response_model=ReviewOut)
+async def update_review(
+    review_id: UUID,
+    payload: ReviewUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    """Atualiza uma avaliação existente do próprio usuário."""
+    review = await crud.get_review(session, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Avaliação não encontrada")
+    if review.user_id != payload.user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="A avaliação pertence a outro usuário",
+        )
+
+    user = await crud.get_user(session, payload.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    updated = await crud.update_review(
+        session=session,
+        review=review,
+        rating=payload.rating,
+        comment=payload.comment,
+    )
+    return _to_out(updated, user)
+
+
+@router.delete("/{review_id}", status_code=204)
+async def delete_review(
+    review_id: UUID,
+    user_id: UUID = Query(...),
+    session: AsyncSession = Depends(get_db),
+):
+    """Remove uma avaliação existente do próprio usuário."""
+    review = await crud.get_review(session, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Avaliação não encontrada")
+    if review.user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="A avaliação pertence a outro usuário",
+        )
+
+    await crud.delete_review(session, review)
+    return Response(status_code=204)

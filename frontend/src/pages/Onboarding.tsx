@@ -1,14 +1,48 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapPin } from 'lucide-react'
 import { toast } from 'sonner'
+import { DEFAULT_LOCATION, useLocationStore } from '@/store/locationStore'
 
 export function Onboarding() {
   const navigate = useNavigate()
+  const setLocation = useLocationStore((s) => s.setLocation)
+  const [locating, setLocating] = useState(false)
+
+  const goHome = () => navigate('/home')
 
   const handleLocation = () => {
-    // TODO: usar navigator.geolocation
-    toast.success('Localização detectada: Osasco, SP')
-    setTimeout(() => navigate('/home'), 600)
+    if (!navigator.geolocation) {
+      toast.success('Usando Osasco, SP como localização padrão')
+      goHome()
+      return
+    }
+
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+          label: 'Minha localização',
+        })
+        setLocating(false)
+        toast.success('Localização detectada')
+        goHome()
+      },
+      () => {
+        setLocating(false)
+        setLocation(DEFAULT_LOCATION)
+        toast.success('Usando Osasco, SP como localização padrão')
+        goHome()
+      },
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+    )
+  }
+
+  const handleManualAddress = () => {
+    setLocation(DEFAULT_LOCATION)
+    goHome()
   }
 
   return (
@@ -29,12 +63,15 @@ export function Onboarding() {
       <button
         type="button"
         onClick={handleLocation}
-        className="w-full bg-primary text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        disabled={locating}
+        className="w-full bg-primary text-white rounded-2xl py-3.5 font-semibold flex items-center justify-center gap-2 hover:bg-primary-dark disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       >
-        <MapPin size={18} /> Usar minha localização
+        <MapPin size={18} />{' '}
+        {locating ? 'Detectando localização...' : 'Usar minha localização'}
       </button>
       <button
         type="button"
+        onClick={handleManualAddress}
         className="mt-3 text-sm text-ink-soft underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         Digitar endereço manualmente

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { restaurants } from '@/data/mockData'
+import { useCatalog } from '@/hooks/useCatalog'
 import { filterRestaurants } from '@/lib/search'
 import type { Restaurant } from '@/types'
 
@@ -12,6 +12,7 @@ interface SearchState {
 }
 
 export function useRestaurantSearch(query: string) {
+  const { restaurants, load } = useCatalog()
   const [state, setState] = useState<SearchState>({
     results: restaurants,
     loading: false,
@@ -43,9 +44,12 @@ export function useRestaurantSearch(query: string) {
     }, SEARCH_DELAY_MS)
 
     return () => clearTimeout(timeout)
-  }, [query, attempt])
+  }, [query, attempt, restaurants])
 
-  const retry = () => setAttempt((value) => value + 1)
+  const retry = () => {
+    void load(true)
+    setAttempt((value) => value + 1)
+  }
 
   return { ...state, retry }
 }

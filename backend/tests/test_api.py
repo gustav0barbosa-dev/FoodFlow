@@ -115,6 +115,106 @@ def test_review_invalid_rating_returns_422() -> None:
     assert response.status_code == 422
 
 
+def _review_fixture() -> tuple[Review, User]:
+    user = User(
+        id=uuid4(),
+        name="Ana Souza",
+        email=f"{uuid4()}@test.dev",
+        dietary_preferences=[],
+    )
+    review = Review(
+        id=uuid4(),
+        restaurant_id=uuid4(),
+        user_id=user.id,
+        rating=3,
+        comment="Regular",
+        created_at=datetime.now(timezone.utc),
+    )
+    return review, user
+
+
+def test_update_review_returns_updated_payload(monkeypatch) -> None:
+    _use_fake_db()
+    review, user = _review_fixture()
+
+    async def fake_get_review(*_args, **_kwargs):
+        return review
+
+    async def fake_get_user(*_args, **_kwargs):
+        return user
+
+    async def fake_update_review(session, review, rating, comment):
+        review.rating = rating
+        review.comment = comment
+        return review
+
+    monkeypatch.setattr(crud, "get_review", fake_get_review)
+    monkeypatch.setattr(crud, "get_user", fake_get_user)
+    monkeypatch.setattr(crud, "update_review", fake_update_review)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/v1/reviews/{review.id}",
+            json={
+                "user_id": str(user.id),
+                "rating": 5,
+                "comment": "Agora ficou excelente",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rating"] == 5
+    assert body["comment"] == "Agora ficou excelente"
+    assert body["user_name"] == "Ana Souza"
+
+
+def test_update_review_from_other_user_returns_403(monkeypatch) -> None:
+    _use_fake_db()
+    review, _user = _review_fixture()
+
+    async def fake_get_review(*_args, **_kwargs):
+        return review
+
+    monkeypatch.setattr(crud, "get_review", fake_get_review)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/v1/reviews/{review.id}",
+            json={
+                "user_id": str(uuid4()),
+                "rating": 5,
+                "comment": "Tentativa indevida",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+def test_delete_review_removes_own_review(monkeypatch) -> None:
+    _use_fake_db()
+    review, user = _review_fixture()
+    deleted: list[str] = []
+
+    async def fake_get_review(*_args, **_kwargs):
+        return review
+
+    async def fake_delete_review(_session, current):
+        deleted.append(str(current.id))
+
+    monkeypatch.setattr(crud, "get_review", fake_get_review)
+    monkeypatch.setattr(crud, "delete_review", fake_delete_review)
+
+    with TestClient(app) as client:
+        response = client.delete(
+            f"/api/v1/reviews/{review.id}",
+            params={"user_id": str(user.id)},
+        )
+
+    assert response.status_code == 204
+    assert deleted == [str(review.id)]
+
+
 def test_event_unknown_type_returns_422() -> None:
     with TestClient(app) as client:
         response = client.post(

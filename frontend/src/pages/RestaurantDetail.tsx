@@ -1,17 +1,22 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed, CreditCard } from 'lucide-react'
-import { restaurants } from '@/data/mockData'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { UserReviewForm } from '@/components/restaurant/UserReviewForm'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { EmptyState } from '@/components/common/EmptyState'
+import { Skeleton } from '@/components/common/Skeleton'
 import { toast } from 'sonner'
 import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
+import { useCatalogStore } from '@/store/catalogStore'
+import { deleteReview, getRestaurant } from '@/lib/api'
+import { mapApiRestaurantDetail } from '@/lib/catalog'
+import { API_USER_ID, isUuid } from '@/lib/config'
 import { formatBRL } from '@/lib/utils'
+import type { Restaurant } from '@/types'
 
 export function RestaurantDetail() {
   const { id } = useParams<{ id: string }>()
@@ -21,14 +26,66 @@ export function RestaurantDetail() {
   const count = useCartStore((s) => s.count())
   const trackEvent = useEventsStore((s) => s.trackEvent)
   const lastTrackedId = useRef<string | null>(null)
-  const getUserReview = useReviewsStore((s) => s.getUserReview)
   const removeReview = useReviewsStore((s) => s.removeReview)
   const [editingReview, setEditingReview] = useState(false)
+  const [detail, setDetail] = useState<Restaurant | null>(null)
+  const [detailLoading, setDetailLoading] = useState(true)
+  const [refreshToken, setRefreshToken] = useState(0)
 
-  const restaurant = restaurants.find((r) => r.id === id)
-  const userReviews = useReviewsStore((s) => s.getReviewsForRestaurant(id ?? ''))
-  const userReview = getUserReview(id ?? '')
+  const catalogRestaurants = useCatalogStore((s) => s.restaurants)
+  const catalogRestaurant = catalogRestaurants.find((r) => r.id === id)
+
+  useEffect(() => {
+    if (!id) return
+
+    let active = true
+    const cached = useCatalogStore
+      .getState()
+      .restaurants.find((restaurant) => restaurant.id === id)
+
+    if (!isUuid(id)) {
+      setDetail(cached ?? null)
+      setDetailLoading(false)
+      return
+    }
+
+    setDetailLoading(true)
+    getRestaurant(id)
+      .then((apiDetail) => {
+        if (!active) return
+        const isRecommended = useCatalogStore
+          .getState()
+          .recommendedIds.includes(id)
+        setDetail(mapApiRestaurantDetail(apiDetail, isRecommended))
+      })
+      .catch(() => {
+        if (active) setDetail(cached ?? null)
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [id, refreshToken, catalogRestaurants])
+
+  const restaurant = detail ?? catalogRestaurant
+
+  const userReviews = useReviewsStore((s) =>
+    s.getReviewsForRestaurant(restaurant?.id ?? '')
+  )
+  const apiReviews = restaurant?.reviews ?? []
+  const apiUserReview = apiReviews.find(
+    (review) => review.userId === API_USER_ID
+  )
+  const userReview = userReviews[0] ?? apiUserReview
   const hasReviewed = !!userReview
+
+  const localOnlyReviews = userReviews.filter(
+    (review) => !apiReviews.some((apiReview) => apiReview.id === review.id)
+  )
+  const reviews = [...localOnlyReviews, ...apiReviews]
 
   useEffect(() => {
     if (!restaurant || lastTrackedId.current === restaurant.id) return
@@ -39,6 +96,31 @@ export function RestaurantDetail() {
       category: restaurant.category,
     })
   }, [restaurant, trackEvent])
+
+  const handleRemoveReview = () => {
+    if (!restaurant || !userReview) return
+
+    const reviewId = userReview.id
+    removeReview(restaurant.id)
+    setEditingReview(false)
+    toast.success('Avaliação removida')
+
+    if (isUuid(reviewId) && isUuid(API_USER_ID)) {
+      void deleteReview(reviewId, API_USER_ID)
+        .then(() => setRefreshToken((current) => current + 1))
+        .catch(() => {
+          // Sem API, a remoção local permanece válida.
+        })
+    }
+  }
+
+  if (!restaurant && detailLoading) {
+    return (
+      <div className="h-full bg-white p-4">
+        <Skeleton variant="card" />
+      </div>
+    )
+  }
 
   if (!restaurant) {
     return (
@@ -113,15 +195,17 @@ export function RestaurantDetail() {
               </a>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Phone size={14} />
-            <a
-              href={`tel:${restaurant.phone}`}
-              className="text-primary underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            >
-              {restaurant.phone}
-            </a>
-          </div>
+          {restaurant.phone && (
+            <div className="flex items-center gap-2">
+              <Phone size={14} />
+              <a
+                href={`tel:${restaurant.phone}`}
+                className="text-primary underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {restaurant.phone}
+              </a>
+            </div>
+          )}
           <div className="flex items-center gap-3 text-ink-soft text-xs pt-1">
             <span className="flex items-center gap-1">
               <Bike size={12} />
@@ -157,18 +241,27 @@ export function RestaurantDetail() {
 
         <div className="mt-3">
           {tab === 'menu' &&
-            restaurant.menu.map((item) => (
-              <MenuItem
-                key={item.id}
-                item={item}
-                restaurantId={restaurant.id}
-                restaurantName={restaurant.name}
-              />
+            (restaurant.menu.length > 0 ? (
+              restaurant.menu.map((item) => (
+                <MenuItem
+                  key={item.id}
+                  item={item}
+                  restaurantId={restaurant.id}
+                  restaurantName={restaurant.name}
+                />
+              ))
+            ) : (
+              <p className="text-xs text-ink-soft text-center py-4">
+                Cardápio indisponível no momento.
+              </p>
             ))}
           {tab === 'reviews' && (
             <div className="space-y-4">
               {!hasReviewed && !editingReview && (
-                <UserReviewForm restaurantId={id!} onReviewSubmitted={() => {}} />
+                <UserReviewForm
+                  restaurantId={restaurant.id}
+                  onReviewSubmitted={() => setRefreshToken((current) => current + 1)}
+                />
               )}
               {hasReviewed && userReview && !editingReview && (
                 <section className="bg-green-50 border border-green-100 rounded-xl p-3">
@@ -190,19 +283,14 @@ export function RestaurantDetail() {
                   <div className="mt-2 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setEditingReview(true)
-                      }}
+                      onClick={() => setEditingReview(true)}
                       className="text-xs font-medium text-primary px-2 py-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       Editar
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        removeReview(id!)
-                        toast.success('Avaliação removida')
-                      }}
+                      onClick={handleRemoveReview}
                       className="text-xs font-medium text-ink-soft px-2 py-1.5 rounded hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       Remover
@@ -212,20 +300,23 @@ export function RestaurantDetail() {
               )}
               {editingReview && userReview && (
                 <UserReviewForm
-                  restaurantId={id!}
+                  restaurantId={restaurant.id}
+                  reviewId={userReview.id}
                   initialRating={userReview.rating}
                   initialComment={userReview.comment}
                   onReviewSubmitted={() => {
                     setEditingReview(false)
+                    setRefreshToken((current) => current + 1)
                   }}
                 />
               )}
               <h3 className="font-semibold text-ink text-sm">
-                Avaliações ({restaurant.reviews.length + userReviews.length})
+                Avaliações ({reviews.length})
               </h3>
-              {userReviews.map((r) => <ReviewCard key={r.id} review={r} />)}
-              {restaurant.reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
-              {userReviews.length === 0 && restaurant.reviews.length === 0 && (
+              {reviews.map((review) => (
+                <ReviewCard key={review.id} review={review} />
+              ))}
+              {reviews.length === 0 && (
                 <p className="text-xs text-ink-soft text-center py-4">
                   Sem avaliações ainda. Seja o primeiro!
                 </p>
