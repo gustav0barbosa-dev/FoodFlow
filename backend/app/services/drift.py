@@ -1,19 +1,42 @@
-from typing import Any
 import math
+from typing import Any
 
-# Features que vamos monitorar no futuro.
-# Por enquanto, vamos registrar apenas o turno e o tamanho da lista recomendada.
-FEATURE_NAMES: list[str] = ["turno_encoded", "list_length"]
+import numpy as np
+
+# Features que vamos monitorar.
+# No PR 1 logamos "list_length" e "strategy".
+# Vamos monitorar o tamanho da lista e a proporção de cache hits (futuramente).
+FEATURE_NAMES: list[str] = ["list_length"]
 
 
-def compute_psi(baseline: list[float], current: list[float], bins: int = 10) -> float:
+def compute_psi(baseline: np.ndarray | list[float], current: np.ndarray | list[float], bins: int = 10) -> float:
     """
     Calcula o Population Stability Index (PSI) entre duas distribuições.
-    Stub inicial: retorna 0.0 se as listas forem iguais, e um valor fictício caso contrário.
-    No PR 2 (feat/drift-job) implementaremos a fórmula matemática real.
+    PSI < 0.1: Nenhuma mudança significativa.
+    PSI 0.1 - 0.2: Mudança moderada, requer atenção.
+    PSI > 0.2: Mudança significativa, modelo deve ser retreinado.
     """
-    if not baseline or not current:
+    baseline = np.array(baseline, dtype=float)
+    current = np.array(current, dtype=float)
+
+    if len(baseline) == 0 or len(current) == 0:
         return 0.0
-    if baseline == current:
-        return 0.0
-    return 0.15  # Valor fictício para simular drift moderado nos testes
+
+    # Define os bins baseados no baseline
+    breakpoints = np.linspace(
+        min(baseline.min(), current.min()),
+        max(baseline.max(), current.max()),
+        bins + 1
+    )
+
+    def get_distribution(data):
+        counts, _ = np.histogram(data, bins=breakpoints)
+        # Evita divisão por zero adicionando um pequeno epsilon
+        return (counts + 1e-6) / len(data)
+
+    expected = get_distribution(baseline)
+    actual = get_distribution(current)
+
+    # Fórmula do PSI: sum((actual - expected) * ln(actual / expected))
+    psi_value = np.sum((actual - expected) * np.log(actual / expected))
+    return float(max(0.0, psi_value)) # Garante que não retorne negativo por erro de float
