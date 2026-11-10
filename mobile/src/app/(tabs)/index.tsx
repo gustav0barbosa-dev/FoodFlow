@@ -13,7 +13,7 @@ export default function Home() {
   const colorScheme = useColorScheme()
   const isDark = colorScheme === 'dark'
   const cartCount = useCartStore((s) => s.count())
-  const { restaurants: catalogRestaurants, load, loading } = useCatalogStore()
+  const { restaurants: catalogRestaurants, recommended, load, loading } = useCatalogStore()
   const locationLabel = useLocationStore((s) => s.label)
   const router = useRouter()
   const [query, setQuery] = React.useState('')
@@ -33,6 +33,13 @@ export default function Home() {
   const nearby = filtered.filter(
     (r: any) => !category || r.category === category
   )
+
+  // O feed personalizado vem de GET /recommendations. Se a API não retornar
+  // recomendações, mantém o fallback para os itens marcados no catálogo/mock.
+  const recommendedAll = recommended.length
+    ? recommended
+    : filtered.filter((r: any) => r.isRecommended)
+  const recommendedList = recommendedAll.slice(0, loadedCount)
 
   return (
     <View style={{ flex: 1, backgroundColor: isDark ? '#1a1a1a' : '#F7F7F7' }}>
@@ -90,7 +97,7 @@ export default function Home() {
           ) : (
             <View style={{ height: 260 }}>
               <FlatList
-                data={filtered.filter((r: any) => r.isRecommended).slice(0, loadedCount)}
+                data={recommendedList}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ paddingLeft: 0 }}
@@ -111,7 +118,7 @@ export default function Home() {
               />
             </View>
           )}
-          {filtered.filter((r: any) => r.isRecommended).length > loadedCount && (
+          {recommendedAll.length > loadedCount && (
             <TouchableOpacity
               onPress={() => setLoadedCount((c: number) => c + 3)}
               style={{ alignSelf: 'center', marginTop: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB' }}

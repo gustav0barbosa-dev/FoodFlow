@@ -25,10 +25,14 @@ Este diretório guarda modelos treinados em runtime. Binários (`*.joblib`,
 - Sem dependências ou sem adapter treinado, o serving usa o fallback
   determinístico.
 - Treino de referência executado localmente: 40 amostras, 3 épocas,
-  `sentence-transformers/all-MiniLM-L6-v2`, loss final ~0,47. A qualidade
-  do adapter (AUC/NDCG) ainda não foi avaliada e ele não foi publicado.
-- O adapter não é commitado. Use `scripts/publish_lora.py` apenas depois
-  de avaliar e documentar o artefato.
+  `sentence-transformers/all-MiniLM-L6-v2`, loss final ~0,47.
+- Avaliação offline: `python scripts/evaluate_lora.py --source seed`.
+  Com split temporal de 7 dias: AUC 0.3574 / NDCG@5 0.2018 (LoRA) contra
+  AUC 0.6727 / NDCG@5 0.5002 (LightGBM). O LoRA não superou o baseline e
+  permanece experimental/desabilitado por padrão.
+- O adapter publicado no Hugging Face usa base Llama 3.2 1B; o runtime
+  local usa MiniLM. Alinhe modelo base/target modules antes de reutilizar
+  o artefato publicado.
 
 ## Docker
 

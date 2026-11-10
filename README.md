@@ -30,6 +30,7 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | 📍 **Busca geoespacial** | Restaurantes próximos calculados com PostGIS (`ST_DWithin` + índice GIST) |
 | ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada); re-ranking LoRA opcional |
 | 🎯 **A/B Test** | Experimento controlado: feed personalizado vs. feed por distância |
+| 📱 **Feed personalizado no mobile** | Home consome `GET /recommendations` com fallback para catálogo/mock |
 | 📊 **Monitoramento de drift** | PSI (Population Stability Index) por feature com alertas automáticos |
 | 🔄 **Batch scoring** | Scores pré-calculados por usuário/turno gravados no Redis |
 | ⭐ **Avaliações idempotentes** | Header `Idempotency-Key` para evitar duplicatas |
@@ -41,10 +42,10 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 |---|---|
 | Frontend web | Integrado à API (`src/lib/api.ts`), com fallback local |
 | Backend | LightGBM é o modelo principal; sem artefato usa popularidade |
-| Re-ranking LoRA | Experimental e opcional (`ENABLE_LORA_RERANKER=true`) |
-| Mobile | Catálogo, detalhe e perfil via API; mock como fallback offline |
+| Re-ranking LoRA | Experimental e opcional (`ENABLE_LORA_RERANKER=true`); avaliação offline mostra que não supera o LightGBM no seed |
+| Mobile | Catálogo, detalhe, perfil e feed de recomendações via API; mock como fallback offline |
 | Persistência de modelos | Volume `backend_models` em produção; fallback quando ausente |
-| Docker Compose | Arquivos de dev/prod definidos e validados estaticamente; execução real pendente neste ambiente |
+| Docker Compose | Script de validação end-to-end e workflow de CI adicionados; execução local pendente por ausência de Docker neste ambiente |
 
 ---
 
@@ -96,6 +97,10 @@ foodflow/
 ├── docker-compose.yml              # PostgreSQL/PostGIS + Redis + API
 ├── docker-compose.prod.yml         # Produção (Dockerfile.prod)
 ├── package.json                    # scripts delegados do monorepo
+├── scripts/
+│   └── validate_compose.sh         # validação end-to-end do Compose (dev + prod)
+├── .github/workflows/
+│   └── compose-validation.yml      # validação do Compose em runner com Docker
 ├── docs/
 │   └── arquitetura-tecnica.md      # documentação técnica completa
 ├── backend/
@@ -115,12 +120,13 @@ foodflow/
 │   │   ├── api/                    # restaurants, reviews, recommendations, events, drift, experiment
 │   │   ├── cache/redis_client.py   # scores + Redis Stream + métricas A/B
 │   │   ├── core/                   # config + constantes
-│   │   └── ml/                     # features, recommender, train, lora_training, reranker
+│   │   └── ml/                     # features, recommender, train, lora_training, lora_evaluation, reranker
 │   ├── scripts/
 │   │   ├── init_db.py              # migrações + seed
 │   │   ├── batch_score.py          # batch scoring por usuário/turno
 │   │   ├── drift_detect.py         # detecção de drift (PSI)
 │   │   ├── train_lora.py           # CLI de fine-tuning LoRA (lógica em app/ml/lora_training.py)
+│   │   ├── evaluate_lora.py        # avaliação offline do LoRA (AUC/NDCG@5)
 │   │   └── publish_lora.py         # publicação Hugging Face Hub
 │   └── tests/
 ├── frontend/                       # Web (Vite + React + TS)
@@ -157,6 +163,14 @@ docker compose up -d
 Isso sobe **PostgreSQL/PostGIS**, **Redis** e a **API FastAPI**. As migrações e o seed são aplicados por um serviço `migrate` pontual antes de a API iniciar.
 
 A API estará disponível em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
+
+Para validar migrate, PostGIS, Redis, endpoints e o volume `backend_models` de ponta a ponta em uma máquina com Docker:
+
+```bash
+bash scripts/validate_compose.sh
+```
+
+O mesmo script roda no workflow **Compose validation** (`.github/workflows/compose-validation.yml`) em um runner do GitHub Actions.
 
 ### 2. Rodar o frontend web
 
@@ -347,6 +361,21 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 - **A/B test**: comparação entre feed personalizado (ML) e feed por distância
 - **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
 
+### Avaliação offline do LoRA
+
+`python scripts/evaluate_lora.py --source seed` treina em pedidos antigos e avalia em pedidos recentes (split temporal), sem vazamento de dados e sem sobrescrever o adapter de serving. Resultado com a janela de 7 dias:
+
+| Estratégia | AUC | NDCG@5 |
+|---|---|---|
+| Popularidade | 0.5051 | 0.3268 |
+| **LightGBM** | **0.6727** | **0.5002** |
+| LoRA | 0.3574 | 0.2018 |
+| Híbrido (LightGBM + LoRA) | 0.5903 | 0.4223 |
+
+O LoRA não superou o LightGBM em nenhuma das janelas testadas (7, 10 e 14 dias). Por isso ele permanece **experimental e desabilitado por padrão**; o seed pequeno torna os números indicativos, e o comando aceita `--source db` para reavaliar com dados reais.
+
+> **Atenção:** o adapter publicado no Hugging Face usa base Llama 3.2 1B e o card reporta NDCG@5 0.72 → 0.79. Esses números não são reproduzíveis pelo runtime atual (`all-MiniLM-L6-v2`) e o card contém placeholders. Alinhe base/target modules e reavalie antes de habilitar o LoRA em produção.
+
 ---
 
 ## 🗺️ Roadmap
@@ -365,8 +394,10 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 - [x] Observabilidade (request ID, latência, readiness, métricas)
 - [x] Monitoramento de drift (PSI)
 - [x] Estrutura de re-ranking com LoRA (opcional; fallback por padrão)
+- [x] Avaliação offline do LoRA com AUC/NDCG@5 (LightGBM superior; LoRA mantido experimental)
+- [x] Feed personalizado no mobile consumindo `GET /recommendations`
 - [x] Experimento A/B de recomendações
-- [x] Configuração de deploy de produção com Docker Compose (validação de execução pendente)
+- [x] Script e workflow de validação do Docker Compose
 
 ### 🔄 Em andamento / Próximos passos
 
@@ -374,7 +405,7 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 
 ### 🎯 Longo prazo
 
-- [ ] Publicação do adapter LoRA no Hugging Face Hub
+- [x] Publicação do adapter LoRA no Hugging Face Hub (alinhamento ao modelo base do runtime pendente)
 - [ ] Artigo técnico publicado (Medium/dev.to) explicando a arquitetura
 
 ---

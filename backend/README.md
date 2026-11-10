@@ -99,6 +99,21 @@ serving usa o fallback determinístico. O endpoint
 `POST /api/v1/recommendations/train-lora` apenas retorna `202`; o treino
 deve ser executado offline.
 
+Avaliação offline (split temporal, sem vazamento e sem sobrescrever o
+adapter de serving):
+
+```bash
+python scripts/evaluate_lora.py --source seed
+python scripts/evaluate_lora.py --source db --holdout-days 14
+```
+
+Com o seed e holdout de 7 dias, o LoRA ficou abaixo do LightGBM
+(AUC 0.3574 / NDCG@5 0.2018 contra AUC 0.6727 / NDCG@5 0.5002). O
+resultado se repete em janelas de 10 e 14 dias, então o LoRA permanece
+experimental e **desabilitado por padrão**. O adapter publicado no
+Hugging Face usa base Llama 3.2 1B, diferente do runtime MiniLM; alinhe
+os dois antes de reutilizar o artefato.
+
 A imagem Docker padrão instala apenas `requirements.txt`. Para usar LoRA
 no container, faça um build com `requirements-llmops.txt` ou instale as
 dependências no ambiente de serving.

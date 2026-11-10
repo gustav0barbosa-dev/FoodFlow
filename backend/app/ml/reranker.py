@@ -58,7 +58,12 @@ class LoRAReranker:
     nas features do candidato (rating, frete, tempo de entrega e turno).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model_dir: Path | str | None = None) -> None:
+        # Permite avaliar um adapter temporário (por exemplo, em um split de
+        # validação) sem sobrescrever o artefato usado em serving.
+        self.model_dir: Path = (
+            Path(model_dir) if model_dir is not None else LORA_MODEL_DIR
+        )
         self.available: bool = False
         self._deps_checked: bool = False
         self._torch = None
@@ -133,9 +138,11 @@ class LoRAReranker:
         não estão instaladas, quando não há adapter ou quando o artefato é
         apenas um placeholder. Nesses casos a API segue com fallback.
         """
-        if not LORA_CONFIG_FILE.exists() or not LORA_WEIGHTS_FILE.exists():
+        config_file = self.model_dir / "adapter_config.json"
+        weights_file = self.model_dir / "adapter_model.safetensors"
+        if not config_file.exists() or not weights_file.exists():
             logger.info(
-                "Adapter LoRA não encontrado em %s; usando fallback.", LORA_MODEL_DIR
+                "Adapter LoRA não encontrado em %s; usando fallback.", self.model_dir
             )
             return False
 
@@ -144,7 +151,7 @@ class LoRAReranker:
             return False
 
         try:
-            meta_path = LORA_MODEL_DIR / "reranker_metadata.json"
+            meta_path = self.model_dir / "reranker_metadata.json"
             if meta_path.exists():
                 self.metadata = json.loads(meta_path.read_text(encoding="utf-8"))
 
@@ -154,21 +161,23 @@ class LoRAReranker:
                 )
                 return False
 
-            tokenizer = self._AutoTokenizer.from_pretrained(str(LORA_MODEL_DIR))
+            tokenizer = self._AutoTokenizer.from_pretrained(str(self.model_dir))
             # A inferência precisa usar a mesma arquitetura do treino:
             # AutoModelForSequenceClassification com num_labels=1.
             base_model = self._AutoModelForSequenceClassification.from_pretrained(
                 BASE_MODEL_ID, num_labels=1
             )
-            model = self._PeftModel.from_pretrained(base_model, str(LORA_MODEL_DIR))
+            model = self._PeftModel.from_pretrained(base_model, str(self.model_dir))
             model.eval()
 
             self.tokenizer = tokenizer
             self.model = model
-            logger.info("Adapter LoRA carregado de %s.", LORA_MODEL_DIR)
+            logger.info("Adapter LoRA carregado de %s.", self.model_dir)
             return True
         except Exception as exc:
-            logger.warning("Falha ao carregar adapter LoRA (%s): %s", LORA_MODEL_DIR, exc)
+            logger.warning(
+                "Falha ao carregar adapter LoRA (%s): %s", self.model_dir, exc
+            )
             self.available = False
             self.model = None
             self.tokenizer = None
@@ -181,9 +190,9 @@ class LoRAReranker:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Salva o adapter LoRA, tokenizer e metadados em disco."""
-        LORA_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        model.save_pretrained(str(LORA_MODEL_DIR))
-        tokenizer.save_pretrained(str(LORA_MODEL_DIR))
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(str(self.model_dir))
+        tokenizer.save_pretrained(str(self.model_dir))
 
         bundle = {
             "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -191,14 +200,14 @@ class LoRAReranker:
             "hf_repo_id": HF_REPO_ID,
             **(metadata or {}),
         }
-        (LORA_MODEL_DIR / "reranker_metadata.json").write_text(
+        (self.model_dir / "reranker_metadata.json").write_text(
             json.dumps(bundle, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         self.metadata = bundle
         self.model = model
         self.tokenizer = tokenizer
         self.available = True
-        logger.info("Adapter LoRA salvo em %s.", LORA_MODEL_DIR)
+        logger.info("Adapter LoRA salvo em %s.", self.model_dir)
 
     # ------------------------------------------------------------------
     # Fallback determinístico (sem dependências de LLM)

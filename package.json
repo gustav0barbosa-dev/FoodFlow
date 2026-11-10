@@ -16,6 +16,8 @@
     "db:down": "docker compose down",
     "db:init": "cd backend && python scripts/init_db.py",
     "db:migrate": "npm --prefix backend run migrate",
-    "batch:score": "npm --prefix backend run batch-score"
+    "batch:score": "npm --prefix backend run batch-score",
+    "eval:lora": "cd backend && python scripts/evaluate_lora.py --source seed",
+    "validate:compose": "bash scripts/validate_compose.sh"
   }
 }

@@ -18,6 +18,7 @@ import json
 import logging
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -148,12 +149,17 @@ async def load_training_data(
 
 def _try_train_with_llm_deps(
     samples: list[dict[str, Any]],
+    output_dir: Path | str | None = None,
 ) -> dict[str, Any] | None:
     """Tenta treinar o adapter LoRA com transformers/peft/torch.
 
     Retorna metadados do treino ou None se as dependências não estiverem
     disponíveis (nesse caso, gera um artefato placeholder).
+
+    `output_dir` permite treinar em um diretório temporário (avaliação)
+    sem sobrescrever o adapter usado em serving.
     """
+    target_dir = Path(output_dir) if output_dir is not None else LORA_MODEL_DIR
     try:
         import torch  # type: ignore
         from torch.utils.data import Dataset  # type: ignore
@@ -225,7 +231,7 @@ def _try_train_with_llm_deps(
     model = get_peft_model(base_model, lora_config)
 
     train_args = TrainingArguments(
-        output_dir=str(LORA_MODEL_DIR),
+        output_dir=str(target_dir),
         num_train_epochs=EPOCHS,
         per_device_train_batch_size=BATCH_SIZE,
         learning_rate=LEARNING_RATE,
@@ -255,20 +261,23 @@ def _try_train_with_llm_deps(
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    LORA_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(str(LORA_MODEL_DIR))
-    tokenizer.save_pretrained(str(LORA_MODEL_DIR))
-    (LORA_MODEL_DIR / "reranker_metadata.json").write_text(
+    target_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(str(target_dir))
+    tokenizer.save_pretrained(str(target_dir))
+    (target_dir / "reranker_metadata.json").write_text(
         json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    logger.info("Adapter LoRA treinado e salvo em %s.", LORA_MODEL_DIR)
+    logger.info("Adapter LoRA treinado e salvo em %s.", target_dir)
     return metrics
 
 
-def _generate_placeholder_artifact() -> dict[str, Any]:
+def _generate_placeholder_artifact(
+    output_dir: Path | str | None = None,
+) -> dict[str, Any]:
     """Gera um artefato placeholder quando as dependências não estão instaladas."""
-    LORA_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    target_dir = Path(output_dir) if output_dir is not None else LORA_MODEL_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     adapter_config = {
         "peft_type": "LORA",
@@ -282,13 +291,13 @@ def _generate_placeholder_artifact() -> dict[str, Any]:
         "inference_mode": True,
         "placeholder": True,
     }
-    (LORA_MODEL_DIR / "adapter_config.json").write_text(
+    (target_dir / "adapter_config.json").write_text(
         json.dumps(adapter_config, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    (LORA_MODEL_DIR / "adapter_model.safetensors").write_bytes(b"")
+    (target_dir / "adapter_model.safetensors").write_bytes(b"")
 
-    (LORA_MODEL_DIR / "tokenizer.json").write_text(
+    (target_dir / "tokenizer.json").write_text(
         json.dumps({"vocab": {}, "placeholder": True}), encoding="utf-8"
     )
 
@@ -305,36 +314,39 @@ def _generate_placeholder_artifact() -> dict[str, Any]:
         "note": "Artefato placeholder gerado sem dependências de LLM. "
         "Instale transformers/peft/torch para treino real.",
     }
-    (LORA_MODEL_DIR / "reranker_metadata.json").write_text(
+    (target_dir / "reranker_metadata.json").write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     logger.info(
-        "Artefato placeholder salvo em %s (sem treino real).", LORA_MODEL_DIR
+        "Artefato placeholder salvo em %s (sem treino real).", target_dir
     )
     return metadata
 
 
-async def train_lora() -> dict[str, Any] | None:
+async def train_lora(output_dir: Path | str | None = None) -> dict[str, Any] | None:
     """Executa o pipeline de treino LoRA a partir dos dados do banco."""
     async with AsyncSessionLocal() as session:
         users, orders, restaurants = await load_training_data(session)
 
-    return _train_from_entities(users, orders, restaurants)
+    return _train_from_entities(users, orders, restaurants, output_dir=output_dir)
 
 
-def train_lora_from_seed() -> dict[str, Any] | None:
+def train_lora_from_seed(
+    output_dir: Path | str | None = None,
+) -> dict[str, Any] | None:
     """Treina o LoRA a partir do seed determinístico, sem acessar o banco."""
     from app.ml.train import build_seed_entities
 
     users, orders, restaurants = build_seed_entities()
-    return _train_from_entities(users, orders, restaurants)
+    return _train_from_entities(users, orders, restaurants, output_dir=output_dir)
 
 
 def _train_from_entities(
     users: list[User],
     orders: list[Order],
     restaurants: list[Restaurant],
+    output_dir: Path | str | None = None,
 ) -> dict[str, Any] | None:
     samples = build_lora_training_frame(users, orders, restaurants)
     if not samples:
@@ -343,8 +355,8 @@ def _train_from_entities(
 
     logger.info("Geradas %d amostras para treino LoRA.", len(samples))
 
-    metrics = _try_train_with_llm_deps(samples)
+    metrics = _try_train_with_llm_deps(samples, output_dir=output_dir)
     if metrics is None:
-        metrics = _generate_placeholder_artifact()
+        metrics = _generate_placeholder_artifact(output_dir=output_dir)
 
     return metrics

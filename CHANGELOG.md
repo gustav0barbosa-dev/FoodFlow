@@ -25,11 +25,17 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - `.gitignore`: adapter LoRA (`backend/models/lora_reranker/`) não versionado
 - `docs/arquitetura-tecnica.md`: seção de estado atual, LoRA marcado como experimental, MLflow/DVC/Airflow como planejados e endpoints reais
 - Validação local: LightGBM retreinado com NumPy 1.26.0; LoRA real treinado (40 amostras, 3 épocas) e carregado com `ENABLE_LORA_RERANKER=true`
-- Validação estática do Compose (YAML, serviços, healthchecks e volume `backend_models`); execução real pendente por ausência de Docker
+- Validação estática do Compose (YAML, serviços, healthchecks e volume `backend_models`); execução live agora coberta por `scripts/validate_compose.sh` e workflow de CI, pendente de execução em runner com Docker
 - `backend/.dockerignore`: exclui `.venv`, caches e testes do contexto de build
 - Testes de regressão para importação tardia do re-ranker, inferência via logits e atribuição A/B estável
 - Testes do pipeline LoRA: geração de amostras positivas/negativas e artefato placeholder
 - Mobile: tela de detalhe do restaurante resolve IDs da API via `catalogStore`, mantendo mock como fallback
+- `app/ml/lora_evaluation.py` e `scripts/evaluate_lora.py`: avaliação offline do LoRA com split temporal, AUC macro e NDCG@5, comparando popularidade, LightGBM, LoRA e híbrido; o adapter de avaliação é treinado em diretório temporário
+- `LoRAReranker(model_dir=...)` e `_try_train_with_llm_deps(..., output_dir=...)`: permitem avaliar sem sobrescrever o artefato de serving
+- Mobile: feed "Recomendados para você" consome `GET /recommendations` (usuário, localização, turno e grupo A/B), com fallback para catálogo/mock
+- `scripts/validate_compose.sh` e `.github/workflows/compose-validation.yml`: validação end-to-end de migrate, PostGIS, Redis, seed, endpoints e volume `backend_models` em ambiente com Docker
+- Testes do LoRA: NDCG@5, blend híbrido, ausência de vazamento no split temporal e diretório de adapter configurável; backend com 102 testes passando
+- Avaliação LoRA (seed, holdout de 7 dias): LightGBM AUC 0.6727 / NDCG@5 0.5002; LoRA AUC 0.3574 / NDCG@5 0.2018; híbrido AUC 0.5903 / NDCG@5 0.4223. LoRA permanece experimental e desabilitado por padrão
 
 ### Alterado
 - Reorganização do repositório em monorepo: frontend movido para `frontend/`, documentação para `docs/`

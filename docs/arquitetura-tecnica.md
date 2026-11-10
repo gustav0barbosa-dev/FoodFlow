@@ -18,13 +18,13 @@ entre proposta e realidade.
 | Recomendação | **LightGBM** implementado, com features por turno e fallback por popularidade/distância. |
 | Cache e batch scoring | Redis é **opcional** (a API degrada sem ele); `scripts/batch_score.py` permite pré-calcular scores de forma manual ou agendada. |
 | A/B test e drift | Implementados (atribuição estável por SHA-256 e PSI por feature). |
-| Mobile | React Native + Expo; catálogo, detalhe e perfil consomem a API, com mock como fallback offline. |
-| Docker Compose | Arquivos de desenvolvimento e produção definidos; a execução ainda não foi validada neste ambiente por ausência de Docker. |
-| LoRA | **Experimental e opcional**: treino offline, carregamento sob flag e fallback determinístico. Sem métricas de qualidade publicadas. |
+| Mobile | React Native + Expo; catálogo, detalhe, perfil e feed de recomendações consomem a API, com mock como fallback offline. |
+| Docker Compose | Arquivos de desenvolvimento e produção definidos, com script de validação end-to-end e workflow de CI. A execução live ainda não foi feita neste ambiente por ausência de Docker. |
+| LoRA | **Experimental e opcional**: treino offline, carregamento sob flag e fallback determinístico. Avaliação offline (AUC/NDCG@5) implementada; no seed o LoRA não superou o LightGBM, então permanece desabilitado por padrão. |
 | MLflow / DVC | **Não implementados**; o versionamento atual usa joblib + metadados JSON + Git. |
 | Embeddings, agentes e RAG | **Planejados**; não fazem parte do runtime atual. |
 | Airflow | **Não implementado**; o batch é executado por script, cron/Task Scheduler ou profile do Compose. |
-| Hugging Face | O script de publicação existe, mas um adapter LoRA real ainda não foi publicado. |
+| Hugging Face | Há um adapter publicado, mas ele usa base Llama 3.2 1B e métricas não reproduzíveis pelo runtime atual (MiniLM); a avaliação local não confirma o ganho. |
 
 ## 1. Visão geral e escopo do projeto
 
@@ -270,16 +270,52 @@ estágio **experimental** e não é necessário para a API funcionar.
     LoRA dentro do container, é necessário um build com
     `requirements-llmops.txt` ou instalar as dependências no ambiente de
     serving.
--   Ainda **não há avaliação offline de qualidade do LoRA** (AUC, NDCG
-    etc.) nem publicação no Hugging Face. O adapter real precisa ser
-    validado antes de ser tratado como parte do recomendador.
+-   A avaliação offline está implementada em `app/ml/lora_evaluation.py`
+    e pode ser executada com
+    `python scripts/evaluate_lora.py --source seed` (ou `--source db`).
+    O treino do adapter de avaliação acontece em um diretório temporário
+    e **não** sobrescreve o artefato de serving.
+-   Existe um adapter publicado no Hugging Face com base Llama 3.2 1B e
+    um card que reporta NDCG@5 0.79. O runtime deste repositório usa
+    `sentence-transformers/all-MiniLM-L6-v2`, e a avaliação reproduzível
+    com esse caminho **não confirma** o ganho. Antes de habilitar em
+    produção, é necessário alinhar modelo base/target modules e reavaliar
+    o artefato publicado.
+
+#### Resultados da avaliação offline (seed, split temporal)
+
+A avaliação treina em pedidos antigos e mede pedidos recentes, com
+features do usuário calculadas apenas no histórico de treino (sem
+vazamento). Cada contexto é um par (usuário, turno); os candidatos são os
+12 restaurantes do seed. Métricas: AUC macro por contexto e NDCG@5 macro.
+
+| Estratégia | AUC | NDCG@5 |
+|---|---|---|
+| Popularidade | 0.5051 | 0.3268 |
+| LightGBM | **0.6727** | **0.5002** |
+| LoRA | 0.3574 | 0.2018 |
+| Híbrido (LightGBM + LoRA, 50/50) | 0.5903 | 0.4223 |
+
+Em janelas alternativas de holdout (10 e 14 dias), o LoRA também ficou
+abaixo do LightGBM (AUC 0.5182 e 0.3606, respectivamente; LightGBM 0.5939
+e 0.5858). O híbrido não superou o LightGBM em nenhuma janela. O seed tem
+apenas 30 pedidos, então os números são **indicativos**; ainda assim, o
+sinal é consistente e suficiente para manter o LoRA como experimental e
+**desabilitado por padrão** (`ENABLE_LORA_RERANKER=false`).
+
+O card do adapter publicado no Hugging Face reporta NDCG@5 0.72 → 0.79
+com base Llama 3.2 1B. Esses números não são reproduzíveis a partir deste
+repositório (runtime MiniLM) e o card ainda contém placeholders; eles não
+devem ser usados como evidência de qualidade até que o artefato seja
+alinhado ao runtime e reavaliado.
 
 **Evoluções planejadas (não implementadas):**
 
 -   Enriquecimento de features com embeddings de descrições e cardápios.
 -   Geração de explicações e agentes/RAG para filtros em linguagem
     natural.
--   Publicação do adapter no Hugging Face Hub.
+-   Alinhamento do adapter publicado no Hugging Face ao modelo base do
+    runtime (MiniLM) e reavaliação antes de habilitá-lo por padrão.
 
 ## 5. Backend e APIs
 
@@ -355,9 +391,11 @@ opcional no runtime e a API degrada sem ele. Fila assíncrona
     -   Chama `GET /restaurants/search` (via `catalogStore`) para obter
         restaurantes próximos; se a API estiver offline, usa o catálogo
         mock local.
-    -   A mesclagem do feed mobile com `GET /recommendations` é uma
-        evolução planejada. O endpoint já existe no backend e é
-        consumido pelo frontend web.
+    -   Em paralelo, chama `GET /recommendations` com `DEFAULT_USER_ID`,
+        localização atual, `getCurrentTurno()` e o grupo A/B opcional. A
+        seção "Recomendados para você" usa a ordem retornada pela API;
+        se as recomendações falharem, mantém o fallback para os itens
+        marcados no catálogo/mock.
     -   Exibe cards com nome, avaliação, distância, tempo estimado e
         telefone.
 2.  **Detalhe do restaurante**
@@ -398,10 +436,19 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
     ou pelo profile `batch` do Compose.
 -   **Monitoramento:** `/health`, `/ready`, métricas Prometheus, cache
     hit rate e relatório de drift por PSI.
+-   **Avaliação offline do LoRA:** `scripts/evaluate_lora.py` compara
+    popularidade, LightGBM, LoRA e híbrido com split temporal, AUC e
+    NDCG@5, usando um adapter temporário que não altera o artefato de
+    serving.
+-   **Validação do Compose:** `scripts/validate_compose.sh` sobe as
+    stacks de desenvolvimento e produção e verifica migrate, PostGIS,
+    Redis, seed, endpoints e o volume `backend_models`. O workflow
+    `.github/workflows/compose-validation.yml` executa o script em um
+    runner com Docker.
 -   **Experimento A/B:** atribuição estável por SHA-256 entre feed
     personalizado e feed por distância, com resultados em
     `/api/v1/experiment/ab-test`.
--   **Testes automatizados:** backend com pytest (95 testes), frontend
+-   **Testes automatizados:** backend com pytest (102 testes), frontend
     web com lint/build/testes e mobile com `tsc --noEmit`.
 
 **Planejado / não implementado:**
@@ -409,9 +456,9 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
 -   **Versionamento com DVC ou MLflow:** hoje o versionamento é feito
     por joblib + metadados + Git.
 -   **Orquestração com Airflow:** o batch é um script avulso.
--   **LLMOps completo:** o treino LoRA é experimental e offline; não há
-    serving com vLLM/Ollama, avaliação de qualidade do adapter nem
-    publicação no Hugging Face.
+-   **LLMOps completo:** o treino LoRA é experimental e offline; a
+    avaliação offline já existe, mas não há serving com vLLM/Ollama nem
+    operação contínua do adapter em produção.
 -   **Monitoramento em nuvem com Prometheus/Grafana:** as métricas
     existem, mas o deploy de observabilidade não foi montado.
 
@@ -433,7 +480,7 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
 | Requisito da vaga | Como o projeto cobre (estado atual) |
 |---|---|
 | **GitHub com implementações de ML** | Pipeline de treino LightGBM, feature engineering, serving, batch scoring e testes automatizados. Não há notebooks de análise exploratória no repositório. |
-| **Modelos publicados no Hugging Face** | Planejado. Existe um script de publicação, mas um adapter LoRA real ainda não foi publicado. |
+| **Modelos publicados no Hugging Face** | Há um adapter LoRA publicado, mas ele usa base Llama 3.2 1B e o card contém métricas não reproduzíveis pelo runtime MiniLM; alinhamento e reavaliação pendentes. |
 | **Projetos de pesquisa / artigos técnicos** | README e documentação técnica com fundamentação no artigo do Red (iFood). Artigo em Medium/dev.to é plano futuro. |
 | **Competições Kaggle** | O MVP usa seed determinístico; um dataset público de delivery para benchmark ainda não foi integrado. |
 | **Construção e integração de soluções de software com IA** | API FastAPI que integra LightGBM, busca geoespacial PostGIS e app mobile; Redis é opcional. |
@@ -447,8 +494,8 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
 |---|---|---|
 | **Fase 1** | Implementada | Modelagem PostGIS, busca geoespacial, catálogo mobile e seed. |
 | **Fase 2** | Implementada parcialmente | Eventos, treino LightGBM e batch scoring. A "feature store" é o próprio PostgreSQL, sem Redis como store dedicada. |
-| **Fase 3** | Parcial | Detalhe do restaurante, avaliações e perfil via API. O feed personalizado no mobile ainda usa busca geoespacial. |
-| **Fase 4** | Experimental | Treino LoRA offline executado; adapter carrega com `ENABLE_LORA_RERANKER=true`. Publicação no Hugging Face e avaliação de qualidade pendentes. |
+| **Fase 3** | Parcial | Detalhe do restaurante, avaliações e perfil via API. O feed personalizado no mobile está integrado a `GET /recommendations`, com fallback para catálogo/mock. |
+| **Fase 4** | Experimental | Treino e avaliação offline do LoRA implementados (AUC/NDCG@5). O adapter não superou o LightGBM no seed e permanece desabilitado por padrão. |
 | **Fase 5 (opcional)** | Pendente | Deploy em nuvem, Prometheus/Grafana e A/B test em produção. |
 
 ## 11. Considerações finais
@@ -473,8 +520,10 @@ portfólio alinhado às competências esperadas na trilha **AI Engineer**.
 -   Tecnologias e serviços marcados como opcionais ou planejados
     representam possibilidades de evolução, não requisitos da primeira
     versão.
--   A validação do Docker Compose permanece pendente neste ambiente por
-    ausência de Docker; os arquivos de desenvolvimento e produção estão
-    versionados e devem ser validados em uma máquina com Docker.
+-   A validação live do Docker Compose ainda não foi executada neste
+    ambiente por ausência de Docker. O script `scripts/validate_compose.sh`
+    e o workflow de CI foram adicionados para rodar a validação em uma
+    máquina com Docker; o resultado deve ser registrado no histórico do
+    workflow após o push.
 -   A arquitetura deverá ser revisada conforme as decisões técnicas
     tomadas durante a implementação.
