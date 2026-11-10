@@ -1,15 +1,18 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MapPin } from 'lucide-react'
+import { MapPin, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { DEFAULT_LOCATION, useLocationStore } from '@/store/locationStore'
+import { useAuth } from '@/contexts/AuthContext'
 
 export function Onboarding() {
   const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
   const setLocation = useLocationStore((s) => s.setLocation)
   const [locating, setLocating] = useState(false)
 
-  const goHome = () => navigate('/home')
+  // Sem sessão, a localização é guardada e o usuário segue para o cadastro.
+  const goHome = () => navigate(isAuthenticated ? '/home' : '/cadastro')
 
   const handleLocation = () => {
     if (!navigator.geolocation) {
@@ -76,6 +79,18 @@ export function Onboarding() {
       >
         Digitar endereço manualmente
       </button>
+
+      <div className="mt-8 flex items-center gap-1 text-sm text-ink-soft">
+        <span>Novo por aqui?</span>
+        <button
+          type="button"
+          onClick={() => navigate('/cadastro')}
+          className="flex items-center gap-1 font-semibold text-primary rounded hover:text-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <UserPlus size={15} aria-hidden="true" />
+          Criar conta
+        </button>
+      </div>
     </div>
   )
 }

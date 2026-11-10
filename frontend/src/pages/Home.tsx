@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import { useHomeFiltersStore } from '@/store/homeFiltersStore'
 import { useHomeSearchStore } from '@/store/homeSearchStore'
 import { useSortStore } from '@/store/sortStore'
+import { useAuthStore } from '@/store/authStore'
 import { useCatalog } from '@/hooks/useCatalog'
 import { useRecommendations } from '@/hooks/useRecommendations'
 import { useSearchTracking } from '@/hooks/useSearchTracking'
@@ -29,10 +30,12 @@ export function Home() {
   const navigate = useNavigate()
   const count = useCartStore((s) => s.count())
   const { restaurants } = useCatalog()
-  const { recommended, loading: recommendationsLoading, experimentGroup } = useRecommendations(
+  const { recommended, experimentGroup } = useRecommendations(
     restaurants
   )
   const locationLabel = useLocationStore((s) => s.label)
+  const authName = useAuthStore((s) => s.user?.name)
+  const greetingName = (authName?.trim() || currentUser.name).split(' ')[0]
   const [loading, setLoading] = useState(true)
   const sort = useSortStore((s) => s.sort)
   const setSort = useSortStore((s) => s.setSort)
@@ -84,12 +87,12 @@ export function Home() {
   }
 
   return (
-    <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
+    <div className="h-full overflow-y-auto pb-6 bg-surface-muted">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-white px-4 pt-4 pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-ink-soft">Olá, {currentUser.name.split(' ')[0]} 👋</p>
+            <p className="text-xs text-ink-soft">Olá, {greetingName} 👋</p>
             <div className="flex items-center gap-1 text-sm font-medium text-ink">
               <MapPin size={14} className="text-primary" />
               {locationLabel}

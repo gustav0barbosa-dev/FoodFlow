@@ -5,6 +5,20 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Corrigido
+- `app/api/recommendations.py`: import inexistente de `app.scripts.train_lora` removido; treino LoRA agora é operação offline (endpoint responde `202`)
+- `app/ml/reranker.py`: dependências de LLM (`torch`/`transformers`/`peft`) passam a ser importadas sob demanda em `load()`, não no import do módulo
+- `app/ml/reranker.py`: inferência usa `AutoModelForSequenceClassification` e extrai um escalar de `outputs.logits` (compatível com o treino)
+- `app/main.py`: LoRA só é carregado com `ENABLE_LORA_RERANKER=true`; `/health` e `/ready` expõem `reranker_loaded`
+- `app/api/recommendations.py`: atribuição A/B usa SHA-256 em vez de `hash()` (estável entre processos)
+- `frontend`: script `lint` adicionado e configuração ESLint corrigida para o formato flat
+- `docker-compose*.yml`: serviço `migrate` separado da API; volume `backend_models` para persistir modelos em produção
+- `mobile`: removido `@types/react-native` redundante (React Native fornece os próprios tipos)
+
+### Adicionado
+- `app/ml/lora_training.py`: lógica de treino LoRA extraída do script; `scripts/train_lora.py` vira CLI fino
+- Testes de regressão para importação tardia do re-ranker, inferência via logits e atribuição A/B estável
+
 ### Alterado
 - Reorganização do repositório em monorepo: frontend movido para `frontend/`, documentação para `docs/`
 - Recomendador passou a compartilhar o mesmo feature engineering entre treino e serving, com scores normalizados em `[0, 1]`

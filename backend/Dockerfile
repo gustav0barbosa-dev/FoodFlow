@@ -15,6 +15,9 @@ COPY app ./app
 COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini .
+# Modelos pré-treinados (se existirem). O .gitignore exclui os artefatos,
+# então a ausência é esperada e o serving cai em fallback.
+COPY models ./models
 
 EXPOSE 8000
 

@@ -5,6 +5,7 @@ import { useOrdersStore } from '@/store/ordersStore'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { usePreferencesStore } from '@/store/preferencesStore'
 import { DEFAULT_ADDRESS, useAddressStore } from '@/store/addressStore'
+import { useAuthStore } from '@/store/authStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { useEventFiltersStore } from '@/store/eventFiltersStore'
 import { DEFAULT_RESTAURANT_SORT, useSortStore } from '@/store/sortStore'
@@ -26,6 +27,7 @@ beforeEach(() => {
   useFavoritesStore.setState({ favoriteIds: [] })
   usePreferencesStore.setState({ preferences: [] })
   useAddressStore.setState({ address: DEFAULT_ADDRESS })
+  useAuthStore.setState({ token: null, user: null, isDemo: false })
   useLocationStore.setState(DEFAULT_LOCATION)
   resetCatalogStore()
   useReviewsStore.setState({ reviews: [] })

@@ -2,7 +2,7 @@
 
 **Plataforma de Delivery com Recomendação Personalizada**
 
-Projeto de portfólio desenvolvido para a vaga de **Estágio/Residência em AI Engineer** no iFood. O FoodFlow é um app de delivery mobile-first inspirado em iFood, 99Food e Keeta, com **busca de restaurantes por proximidade** (PostGIS) e um **sistema de recomendação personalizado** (LightGBM + LightGBM + LoRA re-ranking) que aprende as preferências do usuário por turno — análogo ao sistema **Red** do iFood.
+Projeto de portfólio desenvolvido para a vaga de **Estágio/Residência em AI Engineer** no iFood. O FoodFlow é um app de delivery mobile-first inspirado em iFood, 99Food e Keeta, com **busca de restaurantes por proximidade** (PostGIS) e um **sistema de recomendação personalizado** (LightGBM + re-ranking LoRA opcional) que aprende as preferências do usuário por turno — análogo ao sistema **Red** do iFood.
 
 ## 📌 Índice
 
@@ -104,12 +104,12 @@ foodflow/
 │   │   ├── api/                    # restaurants, reviews, recommendations, events, drift, experiment
 │   │   ├── cache/redis_client.py   # scores + Redis Stream + métricas A/B
 │   │   ├── core/                   # config + constantes
-│   │   └── ml/                     # features, recommender, train, reranker
+│   │   └── ml/                     # features, recommender, train, lora_training, reranker
 │   ├── scripts/
 │   │   ├── init_db.py              # migrações + seed
 │   │   ├── batch_score.py          # batch scoring por usuário/turno
 │   │   ├── drift_detect.py         # detecção de drift (PSI)
-│   │   ├── train_lora.py           # fine-tuning LoRA
+│   │   ├── train_lora.py           # CLI de fine-tuning LoRA (lógica em app/ml/lora_training.py)
 │   │   └── publish_lora.py         # publicação Hugging Face Hub
 │   └── tests/
 ├── frontend/                       # Web (Vite + React + TS)
@@ -123,7 +123,6 @@ foodflow/
 │   ├── src/store/                  # Zustand stores
 │   ├── src/lib/                    # api, config, catalog, utils
 │   └── src/types/                  # tipos TypeScript
-└── mobile/                         # Mobile (React Native + Expo)
 ```
 
 ---
@@ -143,7 +142,7 @@ foodflow/
 docker compose up -d
 ```
 
-Isso sobe **PostgreSQL/PostGIS**, **Redis** e a **API FastAPI** com seed automático.
+Isso sobe **PostgreSQL/PostGIS**, **Redis** e a **API FastAPI**. As migrações e o seed são aplicados por um serviço `migrate` pontual antes de a API iniciar.
 
 A API estará disponível em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
@@ -206,9 +205,15 @@ Defina as variáveis de ambiente antes de subir (ou crie um `.env` na raiz):
 DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow
 REDIS_URL=redis://redis:6379/0
 CORS_ORIGINS=https://app.seudominio.com,https://www.seudominio.com
+# Opcional: habilita o re-ranker LoRA (requer requirements-llmops.txt e adapter)
+ENABLE_LORA_RERANKER=false
 ```
 
 O endpoint `/ready` serve como readiness probe e `/api/v1/metrics` expõe métricas no formato Prometheus.
+
+Em produção, os modelos ficam no volume nomeado `backend_models` (`/app/models`). Treine-os
+em um job separado (por exemplo, `docker compose run --rm backend python scripts/train_lora.py`)
+para que o artefato sobreviva à recriação do container.
 
 ---
 
@@ -227,7 +232,7 @@ O endpoint `/ready` serve como readiness probe e `/api/v1/metrics` expõe métri
 |--------|----------|-----------|
 | `GET` | `/api/v1/recommendations` | Recomendações personalizadas (parâmetro `experiment` opcional: `personalized` \| `distance`) |
 | `POST` | `/api/v1/recommendations/train` | Treina o modelo LightGBM |
-| `POST` | `/api/v1/recommendations/train-lora` | Treina o adapter LoRA de re-ranking |
+| `POST` | `/api/v1/recommendations/train-lora` | Solicita treino LoRA offline (`202`; execute `python scripts/train_lora.py`) |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa re-ranking sobre scores em cache |
 
 ### Avaliações
@@ -300,7 +305,7 @@ Batch scoring diário → Redis (chave: user_id:turno → scores)
         ↓
 API /recommendations lê scores do Redis
         ↓
-Re-ranking com adapter LoRA (quando disponível)
+Re-ranking LoRA opcional (ENABLE_LORA_RERANKER=true) ou fallback determinístico
         ↓
 Frontend recebe lista ordenada por score
 ```
@@ -308,7 +313,7 @@ Frontend recebe lista ordenada por score
 ### Componentes de IA implementados
 
 - **LightGBM**: classificação binária (clicou/não clicou) com features por turno
-- **LoRA**: fine-tuning de modelo pequeno para re-ranking de recomendações
+- **LoRA**: extensão experimental de re-ranking; carregada apenas com `ENABLE_LORA_RERANKER=true` e dependências de LLMOps instaladas. Sem adapter, usa fallback determinístico.
 - **Drift monitoring**: PSI (Population Stability Index) comparando treino vs. serving
 - **A/B test**: comparação entre feed personalizado (ML) e feed por distância
 - **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
@@ -330,7 +335,7 @@ Frontend recebe lista ordenada por score
 - [x] Migrations com Alembic
 - [x] Observabilidade (request ID, latência, readiness, métricas)
 - [x] Monitoramento de drift (PSI)
-- [x] Re-ranking com LoRA
+- [x] Estrutura de re-ranking com LoRA (opcional; fallback por padrão)
 - [x] Experimento A/B de recomendações
 - [x] Deploy de produção com Docker Compose
 

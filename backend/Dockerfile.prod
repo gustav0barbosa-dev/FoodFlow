@@ -29,6 +29,9 @@ COPY app ./app
 COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini .
+# Modelos pré-treinados, quando presentes no contexto de build. Em produção,
+# recomenda-se montar um volume persistente em /app/models.
+COPY models ./models
 
 # Variáveis com valores seguros para produção (sobrescritas via env no runtime).
 ENV DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@localhost:5432/foodflow \
@@ -38,5 +41,6 @@ ENV DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@localhost:5432/foodflow 
 
 EXPOSE 8000
 
-# Aplica migrações e seed antes de subir a API (sem --reload em produção).
-CMD ["sh", "-c", "python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+# A aplicação não aplica migrações no start: use o serviço `migrate`
+# do Compose (ou `python scripts/init_db.py`) antes de subir a API.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

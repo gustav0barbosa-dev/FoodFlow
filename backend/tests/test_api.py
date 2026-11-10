@@ -1,5 +1,6 @@
+import hashlib
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -289,6 +290,31 @@ def test_recommendations_without_turno_history_uses_popularity(monkeypatch) -> N
     assert response.status_code == 200
     assert writes == ["noite"]
     assert response.json()[0]["score"] == 1.0
+
+
+def test_experiment_assignment_is_stable_across_processes() -> None:
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+    expected_digest = int.from_bytes(
+        hashlib.sha256(str(user_id).encode("utf-8")).digest()[:8], "big"
+    )
+    expected = (
+        recommendations_api.EXPERIMENT_PERSONALIZED
+        if expected_digest % 2 == 0
+        else recommendations_api.EXPERIMENT_DISTANCE
+    )
+
+    assert recommendations_api._assign_experiment_group(user_id) == expected
+    # Repetir a chamada não pode mudar o grupo.
+    assert recommendations_api._assign_experiment_group(user_id) == expected
+
+
+def test_train_lora_endpoint_is_offline_only() -> None:
+    with TestClient(app) as client:
+        response = client.post("/api/v1/recommendations/train-lora")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "accepted"
+    assert "scripts/train_lora.py" in response.json()["detail"]
 
 
 def test_request_id_and_process_time_headers() -> None:

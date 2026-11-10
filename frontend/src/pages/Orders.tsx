@@ -38,7 +38,7 @@ export function Orders() {
   const filteredOrders = orders.filter((o) => matchesStatusFilter(o, statusFilter))
 
   return (
-    <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
+    <div className="h-full overflow-y-auto pb-6 bg-surface-muted">
       <header className="sticky top-0 z-10 bg-white px-4 py-4 border-b border-gray-100">
         <h1 className="font-display font-bold text-lg text-ink">Pedidos</h1>
         <p className="text-xs text-ink-soft mt-0.5">

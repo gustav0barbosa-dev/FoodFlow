@@ -14,7 +14,7 @@ export function Favorites() {
   )
 
   return (
-    <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
+    <div className="h-full overflow-y-auto pb-6 bg-surface-muted">
       <header className="sticky top-0 z-10 bg-white px-4 py-4 border-b border-gray-100 flex items-center gap-2">
         <button
           type="button"

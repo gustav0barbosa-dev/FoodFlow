@@ -15,6 +15,7 @@ from app.cache.redis_client import close_redis, ping_redis
 from app.core.config import settings
 from app.database import get_db
 from app.ml.recommender import recommender
+from app.ml.reranker import reranker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("foodflow.request")
@@ -22,7 +23,24 @@ logger = logging.getLogger("foodflow.request")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # LightGBM é o modelo principal; ausência de artefato cai em popularidade.
     recommender.load()
+
+    # LoRA é opcional e experimental. Não importamos torch/transformers/peft
+    # no carregamento do módulo: `reranker.load()` só resolve essas
+    # dependências quando explicitamente habilitado.
+    if settings.enable_lora_reranker:
+        loaded = reranker.load()
+        logger.info(
+            "LoRA re-ranker %s.",
+            "carregado" if loaded else "indisponível (usando fallback)",
+        )
+    else:
+        logger.info(
+            "LoRA re-ranker desabilitado (ENABLE_LORA_RERANKER=false); "
+            "usando fallback determinístico."
+        )
+
     yield
     await close_redis()
 
@@ -100,6 +118,8 @@ async def ready(session: AsyncSession = Depends(get_db)):
         "database": database_ok,
         "redis": redis_ok,
         "model_loaded": recommender.model is not None,
+        "reranker_loaded": reranker.model is not None,
+        "reranker_enabled": settings.enable_lora_reranker,
     }
     return JSONResponse(
         status_code=200 if database_ok else 503,
@@ -113,4 +133,5 @@ async def health():
         "status": "ok",
         "version": app.version,
         "model_loaded": recommender.model is not None,
+        "reranker_loaded": reranker.model is not None,
     }

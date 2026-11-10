@@ -1,4 +1,4 @@
-const settingsItems = ['Notificações', 'Endereços', 'Pagamento', 'Sair']
+const settingsItems = ['Notificações', 'Endereços', 'Pagamento']
 
 export function SettingsList() {
   return (

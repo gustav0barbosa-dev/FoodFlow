@@ -60,8 +60,9 @@ class LoRAReranker:
 
     def __init__(self) -> None:
         self.available: bool = False
+        self._deps_checked: bool = False
         self._torch = None
-        self._AutoModel = None
+        self._AutoModelForSequenceClassification = None
         self._AutoTokenizer = None
         self._PeftModel = None
         self._get_peft_model = None
@@ -70,17 +71,31 @@ class LoRAReranker:
         self.model = None
         self.tokenizer = None
         self.metadata: dict[str, Any] = {}
-        self._try_import_llm_deps()
+        # Importante: não importamos torch/transformers/peft aqui. As
+        # dependências opcionais só são carregadas em `load()`, quando o LoRA
+        # está explicitamente habilitado.
 
     # ------------------------------------------------------------------
     # Importação condicional das dependências de LLM
     # ------------------------------------------------------------------
 
-    def _try_import_llm_deps(self) -> None:
+    def _try_import_llm_deps(self) -> bool:
+        """Importa torch/transformers/peft sob demanda.
+
+        Só é chamado por `load()`. Mantém o import do módulo leve para que a
+        API funcione sem as dependências de LLMOps instaladas.
+        """
+        if self._deps_checked:
+            return self.available
+
+        self._deps_checked = True
         try:
-            import torch  # noqa: F401
-            from transformers import AutoModel, AutoTokenizer  # noqa: F401
-            from peft import (  # noqa: F401
+            import torch  # type: ignore
+            from transformers import (  # type: ignore
+                AutoModelForSequenceClassification,
+                AutoTokenizer,
+            )
+            from peft import (  # type: ignore
                 LoraConfig,
                 PeftModel,
                 get_peft_model,
@@ -88,7 +103,9 @@ class LoRAReranker:
             )
 
             self._torch = torch
-            self._AutoModel = AutoModel
+            self._AutoModelForSequenceClassification = (
+                AutoModelForSequenceClassification
+            )
             self._AutoTokenizer = AutoTokenizer
             self._PeftModel = PeftModel
             self._get_peft_model = get_peft_model
@@ -103,34 +120,48 @@ class LoRAReranker:
                 exc,
             )
             self.available = False
+        return self.available
 
     # ------------------------------------------------------------------
     # Carregamento / salvamento do adapter LoRA
     # ------------------------------------------------------------------
 
     def load(self) -> bool:
-        """Carrega o adapter LoRA e o tokenizer, se existirem."""
-        if not self.available:
-            logger.info("Re-rankador LoRA indisponível; usando fallback.")
-            return False
+        """Carrega o adapter LoRA e o tokenizer, se existirem.
 
+        Retorna False (sem levantar exceção) quando as dependências opcionais
+        não estão instaladas, quando não há adapter ou quando o artefato é
+        apenas um placeholder. Nesses casos a API segue com fallback.
+        """
         if not LORA_CONFIG_FILE.exists() or not LORA_WEIGHTS_FILE.exists():
             logger.info(
                 "Adapter LoRA não encontrado em %s; usando fallback.", LORA_MODEL_DIR
             )
             return False
 
+        if not self._try_import_llm_deps():
+            logger.info("Re-rankador LoRA indisponível; usando fallback.")
+            return False
+
         try:
-            import torch  # type: ignore
-
-            tokenizer = self._AutoTokenizer.from_pretrained(str(LORA_MODEL_DIR))
-            base_model = self._AutoModel.from_pretrained(BASE_MODEL_ID)
-            model = self._PeftModel.from_pretrained(base_model, str(LORA_MODEL_DIR))
-            model.eval()
-
             meta_path = LORA_MODEL_DIR / "reranker_metadata.json"
             if meta_path.exists():
                 self.metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+
+            if self.metadata.get("placeholder"):
+                logger.info(
+                    "Adapter LoRA é um placeholder (sem treino real); usando fallback."
+                )
+                return False
+
+            tokenizer = self._AutoTokenizer.from_pretrained(str(LORA_MODEL_DIR))
+            # A inferência precisa usar a mesma arquitetura do treino:
+            # AutoModelForSequenceClassification com num_labels=1.
+            base_model = self._AutoModelForSequenceClassification.from_pretrained(
+                BASE_MODEL_ID, num_labels=1
+            )
+            model = self._PeftModel.from_pretrained(base_model, str(LORA_MODEL_DIR))
+            model.eval()
 
             self.tokenizer = tokenizer
             self.model = model
@@ -139,6 +170,8 @@ class LoRAReranker:
         except Exception as exc:
             logger.warning("Falha ao carregar adapter LoRA (%s): %s", LORA_MODEL_DIR, exc)
             self.available = False
+            self.model = None
+            self.tokenizer = None
             return False
 
     def save(
@@ -164,6 +197,7 @@ class LoRAReranker:
         self.metadata = bundle
         self.model = model
         self.tokenizer = tokenizer
+        self.available = True
         logger.info("Adapter LoRA salvo em %s.", LORA_MODEL_DIR)
 
     # ------------------------------------------------------------------
@@ -229,17 +263,17 @@ class LoRAReranker:
 
         # Se o LoRA não estiver disponível, aplica fallback determinístico.
         if not self.available or self.model is None or self.tokenizer is None:
-            raw_scores = {
-                str(r.id): self._fallback_adjustment(r, turno, lightgbm_scores.get(str(r.id), 0.5))
-                for r in restaurants
-            }
-            return normalize_scores(raw_scores)
+            return self._fallback(restaurants, lightgbm_scores, turno)
 
         # Caminho com LoRA real: monta texto de entrada por (usuário, restaurante, turno)
         # e obtém o score do adapter.
-        try:
-            import torch  # type: ignore
+        if self._torch is None or self._AutoModelForSequenceClassification is None:
+            return self._fallback(
+                restaurants, lightgbm_scores, turno
+            )
 
+        try:
+            torch = self._torch
             raw_scores: dict[str, float] = {}
             with torch.no_grad():
                 for restaurant in restaurants:
@@ -251,19 +285,30 @@ class LoRAReranker:
                         max_length=128,
                     )
                     outputs = self.model(**inputs)
-                    # Usa a média do último hidden state como score proxy.
-                    hidden = outputs.last_hidden_state.mean(dim=1)
-                    score = float(torch.sigmoid(hidden.squeeze(-1)).item())
-                    raw_scores[str(restaurant.id)] = score
+                    # O modelo de sequence classification (num_labels=1) devolve
+                    # logits de shape (batch, 1); extraímos um único escalar.
+                    logit = float(outputs.logits.reshape(-1)[0].item())
+                    raw_scores[str(restaurant.id)] = _sigmoid(logit)
 
             return normalize_scores(raw_scores)
         except Exception as exc:
             logger.warning("Falha no re-rank com LoRA (%s); usando fallback.", exc)
-            raw_scores = {
-                str(r.id): self._fallback_adjustment(r, turno, lightgbm_scores.get(str(r.id), 0.5))
-                for r in restaurants
-            }
-            return normalize_scores(raw_scores)
+            return self._fallback(restaurants, lightgbm_scores, turno)
+
+    def _fallback(
+        self,
+        restaurants: list[Restaurant],
+        lightgbm_scores: dict[str, float],
+        turno: Turno,
+    ) -> dict[str, float]:
+        """Aplica o ajuste determinístico a todos os candidatos."""
+        raw_scores = {
+            str(r.id): self._fallback_adjustment(
+                r, turno, lightgbm_scores.get(str(r.id), 0.5)
+            )
+            for r in restaurants
+        }
+        return normalize_scores(raw_scores)
 
     @staticmethod
     def _build_input_text(

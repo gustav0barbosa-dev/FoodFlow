@@ -22,7 +22,7 @@ export function Search() {
   })
 
   return (
-    <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
+    <div className="h-full overflow-y-auto pb-6 bg-surface-muted">
       <header className="sticky top-0 z-10 bg-white px-4 pt-4 pb-3 border-b border-gray-100">
         <h1 className="font-display font-bold text-lg text-ink mb-3">Buscar</h1>
         <SearchBar value={query} onChange={setQuery} autoFocus />

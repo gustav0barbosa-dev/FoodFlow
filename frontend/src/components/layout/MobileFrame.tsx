@@ -6,15 +6,16 @@ import type { ReactNode } from 'react'
  *
  * Breakpoints:
  * - < 640px: tela cheia (mobile)
- * - 640px - 1023px: moldura de ~640px, altura máxima 92vh
- * - >= 1024px: moldura de ~820px, altura máxima 92vh
+ * - 640px - 1023px: moldura de ~640px, altura de 92vh
+ * - >= 1024px: moldura de ~820px, altura de 92vh
+ *
+ * A altura precisa ser definida (h-[...]) também no desktop. Com `h-auto`,
+ * os filhos `h-full` não têm referência e o scroll interno deixa de funcionar.
  */
 export function MobileFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 sm:p-0 bg-surface-muted">
-      <div
-        className="relative w-full max-w-[430px] sm:max-w-[640px] lg:max-w-[820px] h-screen sm:h-auto sm:max-h-[92vh] sm:rounded-[2.5rem] sm:shadow-2xl overflow-hidden bg-surface"
-      >
+    <div className="flex min-h-[100dvh] items-center justify-center bg-surface-muted sm:p-4">
+      <div className="relative h-[100dvh] w-full max-w-[430px] overflow-hidden bg-surface sm:h-[92vh] sm:max-h-[92vh] sm:max-w-[640px] sm:rounded-[2.5rem] sm:shadow-2xl lg:max-w-[820px]">
         {children}
       </div>
     </div>

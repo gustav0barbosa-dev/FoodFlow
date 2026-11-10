@@ -10,15 +10,33 @@
 version: "3.8"
 
 services:
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    # A imagem de produção já contém o código.
+    volumes: []
+    command: ["python", "scripts/init_db.py"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow}
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
-    # Sem volume de mount de código em produção (imagem já contém o código).
-    volumes: []
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Modelos ficam em volume persistente (não na camada gravável do container).
+    volumes:
+      - backend_models:/app/models
     command: >
-      sh -c "python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      - ENABLE_LORA_RERANKER=${ENABLE_LORA_RERANKER:-false}
+
+volumes:
+  backend_models:

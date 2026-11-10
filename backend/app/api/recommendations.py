@@ -1,3 +1,4 @@
+import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,12 +30,15 @@ EXPERIMENT_GROUPS = (EXPERIMENT_PERSONALIZED, EXPERIMENT_DISTANCE)
 
 
 def _assign_experiment_group(user_id: UUID) -> str:
-    """Atribui determinísticamente um usuário a um grupo do A/B test.
+    """Atribui de forma estável um usuário a um grupo do A/B test.
 
-    Usa um hash estável do user_id para que o mesmo usuário sempre caia no
-    mesmo grupo, sem precisar persistir a atribuição.
+    Usa SHA-256 (e não o `hash()` nativo, que é aleatorizado por processo)
+    para garantir que o mesmo usuário sempre caia no mesmo grupo, inclusive
+    após reinícios do backend.
     """
-    digest = hash(str(user_id)) & 0xFFFFFFFF
+    digest = int.from_bytes(
+        hashlib.sha256(str(user_id).encode("utf-8")).digest()[:8], "big"
+    )
     return EXPERIMENT_PERSONALIZED if digest % 2 == 0 else EXPERIMENT_DISTANCE
 
 
@@ -151,18 +155,23 @@ async def train_model():
     return {"status": "trained", **metrics, "cache_invalidated": invalidated}
 
 
-@router.post("/train-lora")
+@router.post("/train-lora", status_code=202)
 async def train_lora_model():
-    """Treina o adapter LoRA de re-ranking (ou gera artefato placeholder)."""
-    from app.scripts.train_lora import train_lora
+    """Sinaliza que o treino LoRA é uma operação offline.
 
-    metrics = await train_lora()
-    if metrics is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Dados insuficientes para treino do LoRA.",
-        )
-    return {"status": "trained", **metrics}
+    Treinar o adapter dentro de uma requisição HTTP bloquearia o event loop
+    e exigiria GPU/dependências pesadas no processo da API. O endpoint
+    permanece para descoberta, mas delega a execução ao comando dedicado.
+    """
+    return {
+        "status": "accepted",
+        "detail": (
+            "O treino LoRA é uma operação offline. Execute "
+            "`python scripts/train_lora.py` no diretório backend "
+            "(requer requirements-llmops.txt) e reinicie a API para carregar "
+            "o adapter."
+        ),
+    }
 
 
 @router.post("/rerank")

@@ -1,7 +1,10 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { Heart } from 'lucide-react'
+import { ChevronRight, Heart, LogOut, MapPin } from 'lucide-react'
 import { currentUser } from '@/data/mockData'
+import { formatAddress } from '@/lib/address'
+import { useAddressStore } from '@/store/addressStore'
+import { useAuth } from '@/contexts/AuthContext'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { EventsPanel } from '@/components/profile/EventsPanel'
 import { DietaryPreferences } from '@/components/profile/DietaryPreferences'
@@ -12,7 +15,16 @@ import { getABTestResults as fetchABTestResults } from '@/lib/api'
 import { toast } from 'sonner'
 
 export function Profile() {
+  const navigate = useNavigate()
   const favoriteCount = useFavoritesStore((s) => s.favoriteIds.length)
+  const { user: authUser, logout } = useAuth()
+  const structuredAddress = authUser?.address
+  const deliveryAddress = useAddressStore((s) => s.address)
+  const displayName = authUser?.name?.trim() || currentUser.name
+  const displayEmail = authUser?.email || currentUser.email
+  const addressLabel = structuredAddress
+    ? formatAddress(structuredAddress)
+    : deliveryAddress
   const [abGroup, setABGroup] = useState<ABGroup>(getABGroup())
   const [abResults, setABResults] = useState<{
     redis_available: boolean
@@ -45,20 +57,48 @@ export function Profile() {
     }
   }
 
+  const handleLogout = () => {
+    logout()
+    toast.success('Você saiu da conta')
+    navigate('/', { replace: true })
+  }
+
   return (
-    <div className="h-full overflow-y-auto pb-20 bg-surface-muted">
+    <div className="h-full overflow-y-auto pb-6 bg-surface-muted">
       <header className="bg-white px-4 py-6 border-b border-gray-100 flex items-center gap-3">
         <div className="w-14 h-14 rounded-full bg-primary text-white flex items-center justify-center text-xl font-bold">
-          {currentUser.name[0]}
+          {displayName.trim()[0]?.toUpperCase() ?? '?'}
         </div>
         <div>
-          <h1 className="font-display font-bold text-lg text-ink">{currentUser.name}</h1>
-          <p className="text-xs text-ink-soft">{currentUser.email}</p>
+          <h1 className="font-display font-bold text-lg text-ink">{displayName}</h1>
+          <p className="text-xs text-ink-soft">{displayEmail}</p>
         </div>
       </header>
 
       <div className="p-4 space-y-3 sm:max-w-[700px] sm:mx-auto">
         <ProfileStats />
+
+        <Link
+          to="/perfil/endereco"
+          className="block bg-white rounded-2xl p-4 border border-gray-100 hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-1.5 font-semibold text-ink">
+                <MapPin size={16} className="text-primary" aria-hidden="true" />
+                Endereço de entrega
+              </h2>
+              <p className="mt-1 text-sm text-ink-soft break-words">
+                {addressLabel || 'Nenhum endereço cadastrado'}
+              </p>
+            </div>
+            <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+              Alterar
+              <ChevronRight size={14} aria-hidden="true" />
+            </span>
+          </div>
+        </Link>
+
         <DietaryPreferences />
 
         <Link
@@ -160,6 +200,15 @@ export function Profile() {
         <EventsPanel />
 
         <SettingsList />
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white px-4 py-3 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+        >
+          <LogOut size={16} aria-hidden="true" />
+          Sair da conta
+        </button>
       </div>
     </div>
   )
