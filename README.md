@@ -28,12 +28,23 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | Recurso | Descrição |
 |---------|-----------|
 | 📍 **Busca geoespacial** | Restaurantes próximos calculados com PostGIS (`ST_DWithin` + índice GIST) |
-| ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada) + re-ranking LoRA |
+| ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada); re-ranking LoRA opcional |
 | 🎯 **A/B Test** | Experimento controlado: feed personalizado vs. feed por distância |
 | 📊 **Monitoramento de drift** | PSI (Population Stability Index) por feature com alertas automáticos |
 | 🔄 **Batch scoring** | Scores pré-calculados por usuário/turno gravados no Redis |
 | ⭐ **Avaliações idempotentes** | Header `Idempotency-Key` para evitar duplicatas |
-| 📱 **App mobile nativo** | React Native + Expo com todas as telas principais |
+| 📱 **App mobile nativo** | React Native + Expo; catálogo, detalhe e perfil integrados à API com fallback local |
+
+### Status de integração
+
+| Componente | Estado |
+|---|---|
+| Frontend web | Integrado à API (`src/lib/api.ts`), com fallback local |
+| Backend | LightGBM é o modelo principal; sem artefato usa popularidade |
+| Re-ranking LoRA | Experimental e opcional (`ENABLE_LORA_RERANKER=true`) |
+| Mobile | Catálogo, detalhe e perfil via API; mock como fallback offline |
+| Persistência de modelos | Volume `backend_models` em produção; fallback quando ausente |
+| Docker Compose | Arquivos de dev/prod definidos e validados estaticamente; execução real pendente neste ambiente |
 
 ---
 
@@ -61,7 +72,7 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | Banco | PostgreSQL 16 + PostGIS |
 | Cache | Redis 7 |
 | Recomendação | LightGBM + features por turno |
-| Re-ranking | LoRA (transformers + peft + torch) |
+| Re-ranking | LoRA experimental (transformers + peft + torch) |
 | MLOps | Métricas de drift, A/B test, batch scoring |
 | Observabilidade | X-Request-ID, X-Process-Time, readiness, métricas Prometheus |
 
@@ -122,6 +133,7 @@ foodflow/
 │   ├── src/app/                    # Expo Router (rotas baseadas em arquivos)
 │   ├── src/store/                  # Zustand stores
 │   ├── src/lib/                    # api, config, catalog, utils
+│   ├── src/data/mockData.ts        # fallback local quando a API está offline
 │   └── src/types/                  # tipos TypeScript
 ```
 
@@ -235,6 +247,12 @@ para que o artefato sobreviva à recriação do container.
 | `POST` | `/api/v1/recommendations/train-lora` | Solicita treino LoRA offline (`202`; execute `python scripts/train_lora.py`) |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa re-ranking sobre scores em cache |
 
+### Usuários
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/v1/users/{id}` | Perfil do usuário (nome, e-mail e preferências alimentares) |
+
 ### Avaliações
 
 | Método | Endpoint | Descrição |
@@ -310,6 +328,17 @@ Re-ranking LoRA opcional (ENABLE_LORA_RERANKER=true) ou fallback determinístico
 Frontend recebe lista ordenada por score
 ```
 
+## 🤖 LLMOps (Hugging Face)
+
+O adaptador LoRA responsável pelo re-ranking personalizado das recomendações foi treinado, publicado e testado publicamente no Hugging Face Hub.
+
+👉 **[Acesse o modelo: barbosaDev01/foodflow-llm-reranker-lora](https://huggingface.co/barbosaDev01/foodflow-llm-reranker-lora)**
+
+- **Arquitetura:** Fine-tuning LoRA sobre o modelo base `sentence-transformers/all-MiniLM-L6-v2`.
+- **Tarefa:** Re-ranking de restaurantes baseado no contexto do usuário (turno, preferências e distância).
+- **Teste de Inferência:** O modelo foi carregado e validado no Google Colab.
+  ![Teste do Modelo no Colab](docs/screenshots/huggingface-colab.png)
+
 ### Componentes de IA implementados
 
 - **LightGBM**: classificação binária (clicou/não clicou) com features por turno
@@ -337,7 +366,7 @@ Frontend recebe lista ordenada por score
 - [x] Monitoramento de drift (PSI)
 - [x] Estrutura de re-ranking com LoRA (opcional; fallback por padrão)
 - [x] Experimento A/B de recomendações
-- [x] Deploy de produção com Docker Compose
+- [x] Configuração de deploy de produção com Docker Compose (validação de execução pendente)
 
 ### 🔄 Em andamento / Próximos passos
 

@@ -4,6 +4,28 @@
 > restaurantes por proximidade e recomendações personalizadas inspiradas
 > na arquitetura de recomendação do iFood.
 
+## Estado atual da implementação
+
+Este documento descreve a arquitetura-alvo **e** o que já está
+implementado no repositório. A tabela abaixo prevalece em caso de dúvida
+entre proposta e realidade.
+
+| Componente | Estado atual |
+|---|---|
+| Backend | Implementado em **FastAPI** (Python 3.11), com catálogo, recomendações, eventos, avaliações, usuários e observabilidade. |
+| Banco e migrações | **PostgreSQL 16 + PostGIS** via Alembic; seed determinístico para catálogo, usuários, pedidos e avaliações. |
+| Busca geoespacial | Implementada com `ST_DWithin` e índice GIST. |
+| Recomendação | **LightGBM** implementado, com features por turno e fallback por popularidade/distância. |
+| Cache e batch scoring | Redis é **opcional** (a API degrada sem ele); `scripts/batch_score.py` permite pré-calcular scores de forma manual ou agendada. |
+| A/B test e drift | Implementados (atribuição estável por SHA-256 e PSI por feature). |
+| Mobile | React Native + Expo; catálogo, detalhe e perfil consomem a API, com mock como fallback offline. |
+| Docker Compose | Arquivos de desenvolvimento e produção definidos; a execução ainda não foi validada neste ambiente por ausência de Docker. |
+| LoRA | **Experimental e opcional**: treino offline, carregamento sob flag e fallback determinístico. Sem métricas de qualidade publicadas. |
+| MLflow / DVC | **Não implementados**; o versionamento atual usa joblib + metadados JSON + Git. |
+| Embeddings, agentes e RAG | **Planejados**; não fazem parte do runtime atual. |
+| Airflow | **Não implementado**; o batch é executado por script, cron/Task Scheduler ou profile do Compose. |
+| Hugging Face | O script de publicação existe, mas um adapter LoRA real ainda não foi publicado. |
+
 ## 1. Visão geral e escopo do projeto
 
 O objetivo é construir uma plataforma de delivery **mobile-first** que:
@@ -35,10 +57,12 @@ MVP, mas a arquitetura já considera sua possível inclusão futura.
 └──────────────────────┬───────────────────────────────────────┘
                        │ HTTPS / JSON
 ┌──────────────────────▼───────────────────────────────────────┐
-│  API GATEWAY / BACKEND (NestJS ou FastAPI)                   │
+│  BACKEND (FastAPI)                                           │
 │  • /api/v1/restaurants/search  (geo)                         │
+│  • /api/v1/restaurants/:id     (detalhe)                     │
 │  • /api/v1/recommendations     (personalizado)               │
-│  • /api/v1/users/:id/events    (coleta de interações)        │
+│  • /api/v1/users/:id           (perfil)                      │
+│  • /api/v1/events              (coleta de interações)        │
 └───────┬───────────────────────────────┬─────────────────────┘
         │                               │
 ┌───────▼──────────┐          ┌─────────▼─────────────────────┐
@@ -52,9 +76,9 @@ MVP, mas a arquitetura já considera sua possível inclusão futura.
 ┌───────▼──────────────────────────────────────────────────────┐
 │  PIPELINE DE ML / LLMOPS                                     │
 │  • Treino do modelo de recomendação (LightGBM)               │
-│  • Embeddings de itens/restaurantes                          │
-│  • LLM opcional para enriquecimento de features (LoRA)       │
-│  • Serving de scores (batch diário → Redis)                  │
+│  • Embeddings de itens/restaurantes (planejado)              │
+│  • Re-rank LoRA opcional (experimental) + fallback           │
+│  • Batch scoring agendável → Redis                           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,7 +88,9 @@ MVP, mas a arquitetura já considera sua possível inclusão futura.
     índices GIST, permitindo buscas eficientes por raio.
 -   **Redis:** cache de scores de recomendação. Na arquitetura de
     referência descrita, o iFood calcula scores no dia anterior (D1) e
-    os disponibiliza no Redis para reduzir a latência.
+    os disponibiliza no Redis para reduzir a latência. No MVP atual o
+    Redis é **opcional**: sem ele, a API calcula os scores sob demanda e
+    continua respondendo (degradação graciosa).
 -   **React Native com Expo:** um único código-base para iOS e Android,
     com integração nativa de GPS e mapas.
 -   **Modelo de recomendação leve (LightGBM):** escolha para o MVP, com
@@ -74,6 +100,11 @@ MVP, mas a arquitetura já considera sua possível inclusão futura.
 ## 3. Modelo de dados e geolocalização
 
 ### 3.1 Entidades principais
+
+O schema real e as migrações estão em
+`backend/alembic/versions/0001_initial_schema.py`. O bloco abaixo é uma
+visão conceitual simplificada; consulte a migração para os tipos,
+constraints e índices exatos.
 
 ``` sql
 -- Extensão PostGIS
@@ -86,9 +117,14 @@ CREATE TABLE restaurants (
     phone TEXT,
     address TEXT,
     location GEOGRAPHY(POINT, 4326) NOT NULL, -- latitude/longitude
-    categories TEXT[],
+    categories JSONB,
     average_rating NUMERIC(2,1) DEFAULT 0,
     review_count INT DEFAULT 0,
+    delivery_fee NUMERIC DEFAULT 0,
+    delivery_time_min INT DEFAULT 0,
+    delivery_time_max INT DEFAULT 0,
+    image_url TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -97,7 +133,9 @@ CREATE INDEX idx_restaurants_location
 
 CREATE TABLE users (
     id UUID PRIMARY KEY,
-    dietary_preferences TEXT[], -- vegano, vegetariano etc.
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    dietary_preferences JSONB, -- vegano, vegetariano etc.
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -108,6 +146,7 @@ CREATE TABLE orders (
     items JSONB, -- itens pedidos com IDs de taxonomia
     order_value NUMERIC,
     delivery_fee NUMERIC,
+    status TEXT,
     created_at TIMESTAMPTZ
 );
 
@@ -133,12 +172,12 @@ SELECT
     r.*,
     ST_Distance(
         r.location,
-        ST_MakePoint($lon, $lat)::geography
+        ST_SetSRID(ST_MakePoint($lon, $lat), 4326)::geography
     ) / 1000 AS distance_km
 FROM restaurants r
 WHERE ST_DWithin(
     r.location,
-    ST_MakePoint($lon, $lat)::geography,
+    ST_SetSRID(ST_MakePoint($lon, $lat), 4326)::geography,
     $radius_km * 1000
 )
 ORDER BY distance_km ASC
@@ -146,8 +185,9 @@ LIMIT $limit OFFSET $offset;
 ```
 
 Esse padrão permite buscar restaurantes dentro de um raio definido. Os
-campos `average_rating` e `review_count` são mantidos por **triggers**
-no PostgreSQL para evitar a execução de `AVG()` em cada consulta.
+campos `average_rating` e `review_count` são recalculados pela aplicação
+(`crud.refresh_restaurant_rating`) após criar, editar ou remover
+avaliações, evitando a execução de `AVG()` em cada consulta.
 
 ## 4. Sistema de recomendação personalizado (inspirado no iFood)
 
@@ -165,29 +205,33 @@ princípios:
     preferências alimentares), comportamento por turno (valor médio,
     frete médio e categorias mais consumidas) e **medoides** --- itens
     mais representativos por turno, combinando frequência e recência.
-2.  **Features do restaurante/lista:** embedding médio dos itens
-    vendidos, valor médio, frete médio e volume de pedidos por turno.
-3.  **Modelo:** LightGBM com restrições de monotonicidade nas features
-    de similaridade, de modo que maior similaridade resulte em score
-    maior.
-4.  **Serving:** scores pré-calculados diariamente para usuários ativos
-    e armazenados no **Redis**. A API consulta os scores e os combina
-    com a lista de restaurantes próximos.
+2.  **Features do restaurante/lista:** nota média, volume de avaliações,
+    frete, tempo de entrega e indicador de restaurante mais frequente no
+    turno. Embeddings de itens são evolução planejada.
+3.  **Modelo:** LightGBM de classificação binária com 200 árvores,
+    profundidade máxima 5 e one-hot do turno. A restrição de
+    monotonicidade nas features de similaridade é uma evolução
+    planejada, não implementada.
+4.  **Serving:** a API consulta os scores no **Redis**; em caso de cache
+    miss, calcula sob demanda com o LightGBM. O script
+    `scripts/batch_score.py` permite pré-calcular os scores de usuários
+    ativos de forma manual ou agendada. Sem Redis, a API continua
+    funcionando e calcula os scores a cada requisição.
 
 ### 4.2 Pipeline de treino (offline)
 
 ``` text
 Eventos de clique/pedido
         ↓
-Feature Store (PostgreSQL/Redis)
+Dados de pedidos (PostgreSQL) + features calculadas
         ↓
 Treino LightGBM (scikit-learn / LightGBM)
-  • Target: restaurante pedido vs. restaurante exibido e não pedido
-  • Amostragem sem viés de visibilidade (1 positivo : 1 negativo por sessão)
+  • Target: restaurante pedido vs. candidatos não pedidos
+  • Amostragem 1 positivo : 3 negativos por turno
         ↓
-Salvar modelo (MLflow / joblib)
+Salvar modelo (joblib + metadados JSON; MLflow não implementado)
         ↓
-Batch scoring diário → Redis
+Batch scoring opcional/agendável → Redis
 (chave: user_id:turno → scores)
 ```
 
@@ -196,58 +240,66 @@ impressões** para evitar viés de visibilidade e **bootstrapping** a
 partir de interações de carrosséis de categoria quando ainda não há
 dados de produção.
 
-No MVP, o desenvolvimento pode começar com dados sintéticos ou com um
-dataset público do Yelp/Google Places para lidar com o *cold start*.
-Posteriormente, os dados podem ser substituídos por interações reais do
-aplicativo.
+No MVP, o treino pode usar os pedidos do PostgreSQL
+(`python -m app.ml.train --source db`) ou o seed determinístico
+(`python -m app.ml.train --source seed`), que permite gerar o artefato
+sem depender de PostGIS. Posteriormente, os dados podem ser substituídos
+por interações reais do aplicativo.
 
-### 4.3 Uso de LLMs (diferencial para a vaga AI Engineer)
+### 4.3 Uso de LLMs (experimental)
 
-Embora o modelo principal seja o LightGBM, o projeto prevê incorporar
-**LLMs de forma pragmática**, alinhando-se às abordagens descritas na
-documentação de referência, como LCM (*Language-Centric Model*) e
-agentes conversacionais.
+O modelo principal do MVP é o **LightGBM**. O uso de LLMs está em
+estágio **experimental** e não é necessário para a API funcionar.
 
--   **Enriquecimento de features:** utilizar um LLM para gerar
-    descrições semânticas de restaurantes e itens a partir de avaliações
-    e cardápios. Em seguida, gerar embeddings densos (por exemplo,
-    `text-embedding-3-small`) para alimentar o LightGBM com features de
-    similaridade.
--   **Fine-tuning leve (LoRA):** opcionalmente, ajustar um LLM
-    open-source pequeno (por exemplo, Llama 3.2 1B ou Qwen 2.5 1.5B) com
-    **LoRA** para tarefas de *re-ranking* ou geração de explicações,
-    como "Por que recomendamos este restaurante?". Técnicas de
-    *parameter-efficient fine-tuning* permitem personalização sem
-    realizar um fine-tuning completo.
--   **Orquestração de agentes:** um agente simples, utilizando LangChain
-    ou LlamaIndex, pode receber a localização do usuário, consultar a
-    API de restaurantes próximos e usar o LLM para filtrar e ordenar os
-    resultados com base em preferências declaradas, por exemplo: "quero
-    algo vegano e barato". Isso demonstra conhecimentos de
-    **orquestração de agentes** e **RAG**.
+**Re-ranking com LoRA (extensão opcional):**
 
-**Publicação no Hugging Face:** o modelo LoRA ajustado --- ou um modelo
-de embeddings fine-tuned --- poderá ser publicado no Hugging Face Hub
-como parte do portfólio.
+-   O treino é **offline**:
+    `python scripts/train_lora.py --source seed` (ou `--source db`). O
+    script gera pares sintéticos (usuário, restaurante, turno) e ajusta
+    um classificador pequeno com `transformers` + `peft`.
+-   O serving é habilitado por `ENABLE_LORA_RERANKER=true`. Se as
+    dependências, o adapter real ou o artefato estiverem ausentes, o
+    re-ranker aplica um **fallback determinístico** baseado em rating,
+    frete, tempo de entrega e turno.
+-   `POST /api/v1/recommendations/train-lora` retorna `202 Accepted` e
+    apenas orienta o treino offline; ele **não treina dentro da
+    requisição HTTP**.
+-   O artefato esperado fica em `backend/models/lora_reranker/` e não é
+    versionado no Git. Um placeholder é detectado e não carregado.
+-   A imagem Docker padrão instala apenas `requirements.txt`; para usar
+    LoRA dentro do container, é necessário um build com
+    `requirements-llmops.txt` ou instalar as dependências no ambiente de
+    serving.
+-   Ainda **não há avaliação offline de qualidade do LoRA** (AUC, NDCG
+    etc.) nem publicação no Hugging Face. O adapter real precisa ser
+    validado antes de ser tratado como parte do recomendador.
+
+**Evoluções planejadas (não implementadas):**
+
+-   Enriquecimento de features com embeddings de descrições e cardápios.
+-   Geração de explicações e agentes/RAG para filtros em linguagem
+    natural.
+-   Publicação do adapter no Hugging Face Hub.
 
 ## 5. Backend e APIs
 
 ### 5.1 Stack recomendada
 
+**Implementado:** FastAPI (Python 3.11), PostgreSQL 16 + PostGIS
+(imagem `postgis/postgis:16-3.4` no Compose) e Redis 7. O Redis é
+opcional no runtime e a API degrada sem ele. Fila assíncrona
+(BullMQ/RabbitMQ) **não foi implementada**.
+
   -----------------------------------------------------------------------
   Camada                  Tecnologia              Justificativa
   ----------------------- ----------------------- -----------------------
-  API                     **NestJS                NestJS oferece
-                          (Node/TypeScript)** ou  estrutura modular e
-                          **FastAPI (Python)**    integração com
-                                                  Socket.io. FastAPI
-                                                  facilita a integração
-                                                  com o ecossistema
-                                                  Python de ML. Para um
-                                                  perfil AI Engineer,
-                                                  **FastAPI** é vantajoso
-                                                  por unificar backend e
-                                                  serving de ML.
+  API                     **FastAPI (Python)**    Escolhido por unificar
+                                                  backend e serving de ML
+                                                  no ecossistema Python e
+                                                  por facilitar a
+                                                  integração com
+                                                  LightGBM, pandas e
+                                                  scikit-learn.
 
   Banco relacional        **PostgreSQL 16 +       Consultas geoespaciais
                           PostGIS**               eficientes e transações
@@ -264,33 +316,25 @@ como parte do portfólio.
 
 ### 5.2 Endpoints principais
 
-  -----------------------------------------------------------------------------------------------------
-  Método                  Endpoint                                              Finalidade
-  ----------------------- ----------------------------------------------------- -----------------------
-  `GET`                   `/api/v1/restaurants/search?lat=&lon=&radius_km=`     Busca geoespacial de
-                                                                                restaurantes.
-
-  `GET`                   `/api/v1/restaurants/:id`                             Retorna detalhes do
-                                                                                restaurante, incluindo
-                                                                                telefone, endereço e
-                                                                                avaliações agregadas.
-
-  `GET`                   `/api/v1/recommendations?user_id=&lat=&lon=&turno=`   Retorna lista ordenada
-                                                                                por score, consultando
-                                                                                o Redis; utiliza
-                                                                                popularidade como
-                                                                                fallback para novos
-                                                                                usuários.
-
-  `POST`                  `/api/v1/events`                                      Registra cliques,
-                                                                                visualizações e pedidos
-                                                                                para alimentar o
-                                                                                pipeline de treino.
-
-  `POST`                  `/api/v1/reviews`                                     Recebe avaliações, com
-                                                                                idempotência via header
-                                                                                `Idempotency-Key`.
-  -----------------------------------------------------------------------------------------------------
+| Método | Endpoint | Finalidade |
+|---|---|---|
+| `GET` | `/api/v1/restaurants/search?lat=&lon=&radius_km=` | Busca geoespacial de restaurantes. |
+| `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante, incluindo avaliações. |
+| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&experiment=` | Lista ordenada por score; usa Redis quando disponível e fallback por popularidade/distância. |
+| `POST` | `/api/v1/recommendations/train` | Treina o LightGBM a partir dos pedidos do banco. |
+| `POST` | `/api/v1/recommendations/train-lora` | Retorna `202`; o treino LoRA é uma operação offline. |
+| `POST` | `/api/v1/recommendations/rerank` | Re-executa o re-ranking sobre scores já em cache. |
+| `POST` | `/api/v1/events` | Registra cliques, visualizações e pedidos para o pipeline de treino. |
+| `POST` | `/api/v1/reviews` | Cria avaliação, com idempotência via header `Idempotency-Key`. |
+| `PUT` | `/api/v1/reviews/{id}` | Atualiza a avaliação do próprio usuário. |
+| `DELETE` | `/api/v1/reviews/{id}` | Remove a avaliação do próprio usuário. |
+| `GET` | `/api/v1/users/{id}` | Perfil público (nome, e-mail e preferências alimentares). |
+| `GET` | `/health` | Health check com status do modelo e do Redis. |
+| `GET` | `/ready` | Readiness (PostgreSQL obrigatório; Redis e modelo degradáveis). |
+| `GET` | `/api/v1/metrics` | Métricas no formato Prometheus. |
+| `GET` | `/api/v1/metrics/recommendations` | Cache hit rate e estratégia de scoring. |
+| `GET` | `/api/v1/drift` | Relatório de drift de features (PSI). |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados acumulados do experimento A/B. |
 
 ## 6. Frontend mobile (aplicativo)
 
@@ -308,23 +352,26 @@ como parte do portfólio.
 
 1.  **Home / Feed personalizado**
     -   Solicita permissão de localização.
-    -   Chama `GET /restaurants/search` para obter restaurantes
-        próximos.
-    -   Chama `GET /recommendations` e mescla os resultados --- por
-        exemplo, 70% recomendados e 30% próximos por distância --- para
-        evitar uma "bolha" e garantir relevância local.
+    -   Chama `GET /restaurants/search` (via `catalogStore`) para obter
+        restaurantes próximos; se a API estiver offline, usa o catálogo
+        mock local.
+    -   A mesclagem do feed mobile com `GET /recommendations` é uma
+        evolução planejada. O endpoint já existe no backend e é
+        consumido pelo frontend web.
     -   Exibe cards com nome, avaliação, distância, tempo estimado e
         telefone.
 2.  **Detalhe do restaurante**
-    -   Exibe endereço completo, com botão "Abrir no mapa".
-    -   Exibe telefone com link `tel:`.
-    -   Apresenta as últimas 10 avaliações e a média.
-    -   Exibe cardápio com itens identificados por IDs de taxonomia para
-        alimentar o recomendador.
+    -   Consome `GET /restaurants/{id}` e usa o mock como fallback.
+    -   Exibe endereço completo, telefone com link `tel:` e avaliações.
+    -   Exibe cardápio; a integração completa de itens com IDs de
+        taxonomia permanece planejada.
 3.  **Perfil / Preferências**
-    -   Permite configurar preferências alimentares (vegano, vegetariano
-        e sem glúten).
-    -   Exibe histórico de pedidos para dar transparência ao algoritmo.
+    -   Consome `GET /users/{id}` com o `DEFAULT_USER_ID` do seed (Ana
+        Souza) e usa o mock como fallback.
+    -   Exibe nome, e-mail e preferências alimentares retornadas pela
+        API.
+    -   Edição/persistência de preferências e histórico de pedidos no
+        mobile ainda são evolutivas.
 
 ### 6.3 Coleta de eventos para o recomendador
 
@@ -338,20 +385,35 @@ seguindo o princípio de aprender com cliques e compras.
 ## 7. MLOps / LLMOps
 
 Para atender ao requisito de aplicar **MLOps e LLMOps em projetos de
-alto impacto**, o projeto inclui:
+alto impacto**, o projeto separa o que já existe do que é evolução.
 
--   **Versionamento de dados e modelos:** DVC ou MLflow para rastrear
-    datasets, hiperparâmetros e artefatos do LightGBM.
--   **Pipeline de treino reprodutível:** script Python (`train.py`) que
-    lê features do PostgreSQL, treina o modelo, avalia com métricas
-    offline (acurácia e AUC) e registra os resultados no MLflow.
--   **Batch scoring diário:** job agendado (Airflow ou Cron) que gera
-    scores para usuários ativos e os grava no Redis.
--   **Monitoramento:** métricas de latência da API de recomendação, taxa
-    de acerto offline versus online (A/B test) e drift de features.
--   **LLMOps (opcional):** fine-tuning com LoRA usando `peft` e
-    `transformers`; publicação do adapter no Hugging Face; serving via
-    **vLLM** ou **Ollama** para o agente de *re-ranking*.
+**Implementado no MVP:**
+
+-   **Pipeline de treino reprodutível:** `app/ml/train.py` treina o
+    LightGBM a partir do PostgreSQL (`--source db`) ou do seed
+    determinístico (`--source seed`), avalia com AUC e salva o artefato
+    joblib com metadados JSON.
+-   **Batch scoring:** `scripts/batch_score.py` pré-calcula scores por
+    usuário/turno no Redis; pode ser agendado por cron, Task Scheduler
+    ou pelo profile `batch` do Compose.
+-   **Monitoramento:** `/health`, `/ready`, métricas Prometheus, cache
+    hit rate e relatório de drift por PSI.
+-   **Experimento A/B:** atribuição estável por SHA-256 entre feed
+    personalizado e feed por distância, com resultados em
+    `/api/v1/experiment/ab-test`.
+-   **Testes automatizados:** backend com pytest (95 testes), frontend
+    web com lint/build/testes e mobile com `tsc --noEmit`.
+
+**Planejado / não implementado:**
+
+-   **Versionamento com DVC ou MLflow:** hoje o versionamento é feito
+    por joblib + metadados + Git.
+-   **Orquestração com Airflow:** o batch é um script avulso.
+-   **LLMOps completo:** o treino LoRA é experimental e offline; não há
+    serving com vLLM/Ollama, avaliação de qualidade do adapter nem
+    publicação no Hugging Face.
+-   **Monitoramento em nuvem com Prometheus/Grafana:** as métricas
+    existem, mas o deploy de observabilidade não foi montado.
 
 ## 8. Segurança e privacidade
 
@@ -368,117 +430,51 @@ alto impacto**, o projeto inclui:
 
 ## 9. Como este projeto atende aos requisitos da vaga (AI Engineer)
 
-  -----------------------------------------------------------------------
-  Requisito da vaga                   Como o projeto cobre
-  ----------------------------------- -----------------------------------
-  **GitHub com implementações de ML** Repositório público com pipeline de
-                                      treino LightGBM, notebooks de
-                                      análise exploratória, feature
-                                      engineering e scripts de serving.
-
-  **Modelos publicados no Hugging     Publicação do adapter LoRA --- ou
-  Face**                              modelo de embeddings fine-tuned ---
-                                      utilizado no re-ranking ou
-                                      enriquecimento.
-
-  **Projetos de pesquisa / artigos    README detalhado com fundamentação
-  técnicos**                          no artigo do Red (iFood) e nas
-                                      técnicas de recomendação com LLMs.
-                                      Opcionalmente, publicação de um
-                                      artigo no Medium ou dev.to
-                                      explicando a arquitetura.
-
-  **Competições Kaggle**              Uso de um dataset público de
-                                      delivery (por exemplo, "Food
-                                      Delivery Dataset" do Kaggle) para
-                                      pré-treino ou benchmark do
-                                      recomendador.
-
-  **Construção e integração de        API em FastAPI/NestJS que integra o
-  soluções de software com IA**       modelo LightGBM ao aplicativo
-                                      mobile, com busca geoespacial e
-                                      serving de recomendações via Redis.
-
-  **Operacionalização de modelos      Pipeline de batch scoring,
-  (LLMs)**                            monitoramento e, opcionalmente,
-                                      serving de LLM com LoRA para
-                                      re-ranking.
-
-  **MLOps / LLMOps**                  MLflow, DVC, agendamento de jobs,
-                                      monitoramento de drift e A/B test.
-
-  **Trabalho remoto, 30h/semana**     O escopo do MVP foi dimensionado
-                                      para ser construído em
-                                      aproximadamente 3--4 meses em
-                                      regime parcial.
-  -----------------------------------------------------------------------
+| Requisito da vaga | Como o projeto cobre (estado atual) |
+|---|---|
+| **GitHub com implementações de ML** | Pipeline de treino LightGBM, feature engineering, serving, batch scoring e testes automatizados. Não há notebooks de análise exploratória no repositório. |
+| **Modelos publicados no Hugging Face** | Planejado. Existe um script de publicação, mas um adapter LoRA real ainda não foi publicado. |
+| **Projetos de pesquisa / artigos técnicos** | README e documentação técnica com fundamentação no artigo do Red (iFood). Artigo em Medium/dev.to é plano futuro. |
+| **Competições Kaggle** | O MVP usa seed determinístico; um dataset público de delivery para benchmark ainda não foi integrado. |
+| **Construção e integração de soluções de software com IA** | API FastAPI que integra LightGBM, busca geoespacial PostGIS e app mobile; Redis é opcional. |
+| **Operacionalização de modelos (LLMs)** | Batch scoring, monitoramento e A/B test implementados. Serving de LLM com LoRA é experimental/planejado. |
+| **MLOps / LLMOps** | Drift por PSI, A/B test, batch scoring e testes estão implementados. MLflow, DVC e Airflow são planos futuros. |
+| **Trabalho remoto, 30h/semana** | O escopo do MVP foi dimensionado para aproximadamente 3--4 meses em regime parcial. |
 
 ## 10. Roadmap de desenvolvimento
 
-  -----------------------------------------------------------------------
-  Fase                    Período                 Entregável
-  ----------------------- ----------------------- -----------------------
-  **Fase 1**                             Modelagem do banco
-                                                  (PostGIS), endpoint de
-                                                  busca geoespacial e
-                                                  aplicativo React Native
-                                                  com mapa e lista de
-                                                  restaurantes próximos.
-
-  **Fase 2**                                Coleta de eventos,
-                                                  feature store básica,
-                                                  treino do primeiro
-                                                  modelo LightGBM com
-                                                  dados
-                                                  sintéticos/públicos e
-                                                  serving via Redis.
-
-  **Fase 3**                            Integração do feed
-                                                  personalizado no
-                                                  aplicativo, tela de
-                                                  detalhes do restaurante
-                                                  (telefone e avaliações)
-                                                  e pipeline de
-                                                  avaliações.
-
-  **Fase 4**                            Fine-tuning LoRA de um
-                                                  LLM pequeno para
-                                                  re-ranking, publicação
-                                                  no Hugging Face,
-                                                  documentação técnica e
-                                                  artigo de portfólio.
-
-  **Fase 5 (opcional)**   ---                     Deploy em nuvem
-                                                  (AWS/GCP),
-                                                  monitoramento com
-                                                  Prometheus/Grafana e
-                                                  A/B test do feed
-                                                  personalizado versus
-                                                  feed por distância.
-  -----------------------------------------------------------------------
+| Fase | Estado | Entregável |
+|---|---|---|
+| **Fase 1** | Implementada | Modelagem PostGIS, busca geoespacial, catálogo mobile e seed. |
+| **Fase 2** | Implementada parcialmente | Eventos, treino LightGBM e batch scoring. A "feature store" é o próprio PostgreSQL, sem Redis como store dedicada. |
+| **Fase 3** | Parcial | Detalhe do restaurante, avaliações e perfil via API. O feed personalizado no mobile ainda usa busca geoespacial. |
+| **Fase 4** | Experimental | Treino LoRA offline executado; adapter carrega com `ENABLE_LORA_RERANKER=true`. Publicação no Hugging Face e avaliação de qualidade pendentes. |
+| **Fase 5 (opcional)** | Pendente | Deploy em nuvem, Prometheus/Grafana e A/B test em produção. |
 
 ## 11. Considerações finais
 
 Este projeto foi concebido para unir **engenharia de software sólida**
 --- APIs, banco geoespacial e desenvolvimento mobile --- com **IA
-aplicada**, por meio de recomendação personalizada com LightGBM e LLMs.
+aplicada**, por meio de recomendação personalizada com LightGBM e, de
+forma experimental, re-ranking com LoRA.
 
 A proposta utiliza como inspiração a arquitetura de recomendação Red do
-iFood. Ao publicar o código no GitHub, o modelo no Hugging Face e um
-artigo técnico explicando as decisões, o projeto poderá compor um
-portfólio alinhado às competências esperadas na trilha **AI Engineer**:
-construir, integrar e operacionalizar soluções de IA de ponta a ponta,
-com ênfase em **LLMs e MLOps/LLMOps**.
+iFood. O código, a documentação e os testes já demonstram a construção e
+a integração do sistema. A publicação do adapter no Hugging Face e um
+artigo técnico explicando as decisões são próximos passos para compor um
+portfólio alinhado às competências esperadas na trilha **AI Engineer**.
 
 ------------------------------------------------------------------------
 
 ## Observações de implementação
 
--   Este documento descreve a arquitetura e o escopo propostos para o
-    MVP; não significa que todos os componentes já estejam
-    implementados.
--   Tecnologias e serviços marcados como opcionais representam
-    possibilidades de evolução, não requisitos obrigatórios da primeira
+-   A seção **Estado atual da implementação** resume o que já existe; em
+    caso de divergência com as seções propositivas, ela prevalece.
+-   Tecnologias e serviços marcados como opcionais ou planejados
+    representam possibilidades de evolução, não requisitos da primeira
     versão.
+-   A validação do Docker Compose permanece pendente neste ambiente por
+    ausência de Docker; os arquivos de desenvolvimento e produção estão
+    versionados e devem ser validados em uma máquina com Docker.
 -   A arquitetura deverá ser revisada conforme as decisões técnicas
     tomadas durante a implementação.

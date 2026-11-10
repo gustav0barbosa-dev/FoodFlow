@@ -2,6 +2,8 @@
 import asyncio
 import logging
 import random
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
@@ -11,7 +13,7 @@ from sklearn.model_selection import train_test_split
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import TURNOS, Turno
+from app.core.constants import APP_TIMEZONE, TURNOS, Turno
 from app.database import AsyncSessionLocal
 from app.ml.features import (
     build_candidate_features,
@@ -20,6 +22,7 @@ from app.ml.features import (
 )
 from app.ml.recommender import recommender
 from app.models import Order, Restaurant, User
+from app.seed_data import SEED_NAMESPACE, SEED_ORDERS, SEED_RESTAURANTS, SEED_USERS
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +165,109 @@ async def load_training_data(
     return list(users), list(orders), list(restaurants)
 
 
+def _stable_id(value: str) -> uuid.UUID:
+    return uuid.uuid5(SEED_NAMESPACE, value)
+
+
+def build_seed_entities(
+    now: datetime | None = None,
+) -> tuple[list[User], list[Order], list[Restaurant]]:
+    """Monta entidades em memória a partir do seed determinístico.
+
+    Permite treinar o modelo em ambientes sem PostgreSQL/PostGIS (por
+    exemplo, CI ou desenvolvimento local), usando exatamente os mesmos
+    dados que o `seed_database` gravaria no banco.
+    """
+    users = [
+        User(
+            id=_stable_id(f"user:{data['email']}"),
+            name=data["name"],
+            email=data["email"],
+            dietary_preferences=list(data["dietary_preferences"]),
+        )
+        for data in SEED_USERS
+    ]
+    restaurants = [
+        Restaurant(
+            id=_stable_id(f"restaurant:{data['name']}"),
+            name=data["name"],
+            description=f"Melhor {data['category'].lower()} de Osasco",
+            phone="+55 11 99999-0000",
+            address=data["address"],
+            categories=[data["category"]],
+            average_rating=data["rating"],
+            review_count=data["review_count"],
+            delivery_fee=data["delivery_fee"],
+            delivery_time_min=data["delivery_time_min"],
+            delivery_time_max=data["delivery_time_max"],
+            image_url=data["image_url"],
+        )
+        for data in SEED_RESTAURANTS
+    ]
+
+    users_by_email = {user.email: user for user in users}
+    restaurants_by_name = {restaurant.name: restaurant for restaurant in restaurants}
+    menu_by_name = {
+        item["name"]: item["menu_item"] for item in SEED_RESTAURANTS
+    }
+
+    local_now = now or datetime.now(APP_TIMEZONE)
+    orders: list[Order] = []
+    for index, (email, restaurant_name, days_ago, hour, quantity) in enumerate(
+        SEED_ORDERS
+    ):
+        user = users_by_email.get(email)
+        restaurant = restaurants_by_name.get(restaurant_name)
+        menu_item = menu_by_name.get(restaurant_name)
+        if user is None or restaurant is None or menu_item is None:
+            continue
+
+        created_at = (local_now - timedelta(days=days_ago)).replace(
+            hour=hour,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        orders.append(
+            Order(
+                id=_stable_id(f"order:{index}"),
+                user_id=user.id,
+                restaurant_id=restaurant.id,
+                items=[
+                    {
+                        "id": menu_item["id"],
+                        "name": menu_item["name"],
+                        "quantity": quantity,
+                        "price": menu_item["price"],
+                    }
+                ],
+                order_value=round(menu_item["price"] * quantity, 2),
+                delivery_fee=float(restaurant.delivery_fee),
+                status="Entregue",
+                created_at=created_at.astimezone(timezone.utc),
+            )
+        )
+
+    return users, orders, restaurants
+
+
+def train_from_seed() -> dict[str, Any] | None:
+    """Treina o LightGBM usando o seed determinístico, sem acessar o banco."""
+    users, orders, restaurants = build_seed_entities()
+    frame = build_training_frame(users, orders, restaurants)
+    if frame.empty or frame["clicked"].nunique() < 2:
+        return None
+
+    model, metrics = _fit_and_evaluate(frame)
+    feature_columns = [column for column in frame.columns if column != "clicked"]
+    recommender.save(
+        model,
+        feature_columns,
+        metadata={**metrics, "source": "seed"},
+    )
+    return metrics
+
+
 async def train() -> dict[str, Any] | None:
     async with AsyncSessionLocal() as session:
         users, orders, restaurants = await load_training_data(session)
@@ -189,9 +295,30 @@ async def train() -> dict[str, Any] | None:
     return metrics
 
 
-if __name__ == "__main__":
-    result = asyncio.run(train())
-    if result is None:
-        print("⚠️ Dados insuficientes para treino; modelo não salvo.")
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Treino offline do recomendador LightGBM")
+    parser.add_argument(
+        "--source",
+        choices=("db", "seed"),
+        default="db",
+        help="'db' usa os pedidos do PostgreSQL; 'seed' usa o seed determinístico.",
+    )
+    args = parser.parse_args()
+
+    if args.source == "seed":
+        result = train_from_seed()
     else:
-        print(f"✅ Modelo treinado: {result}")
+        result = asyncio.run(train())
+
+    if result is None:
+        print("Dados insuficientes para treino; modelo nao salvo.")
+        return 1
+
+    print(f"Modelo treinado ({args.source}): {result}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

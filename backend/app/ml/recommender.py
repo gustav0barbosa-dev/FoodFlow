@@ -63,7 +63,14 @@ class Recommender:
         try:
             bundle = joblib.load(MODEL_PATH)
         except Exception as exc:  # artefato inválido não deve derrubar a API
-            logger.warning("Falha ao carregar o modelo (%s): %s", MODEL_PATH, exc)
+            logger.warning(
+                "Falha ao carregar o modelo (%s): %s. O fallback por "
+                "popularidade será usado. Se o artefato foi treinado com outra "
+                "versão de NumPy/scikit-learn, retreine com "
+                "`python -m app.ml.train` no mesmo ambiente da API.",
+                MODEL_PATH,
+                exc,
+            )
             return False
 
         if isinstance(bundle, dict):

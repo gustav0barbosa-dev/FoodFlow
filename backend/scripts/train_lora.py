@@ -23,18 +23,33 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.ml.lora_training import train_lora  # noqa: E402
+from app.ml.lora_training import train_lora, train_lora_from_seed  # noqa: E402
 
 
 def main() -> int:
-    result = asyncio.run(train_lora())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fine-tuning LoRA do re-ranker")
+    parser.add_argument(
+        "--source",
+        choices=("db", "seed"),
+        default="db",
+        help="'db' usa os pedidos do PostgreSQL; 'seed' usa o seed determinístico.",
+    )
+    args = parser.parse_args()
+
+    if args.source == "seed":
+        result = train_lora_from_seed()
+    else:
+        result = asyncio.run(train_lora())
+
     if result is None:
-        print("⚠️ Dados insuficientes para treino LoRA; artefato não salvo.")
+        print("Dados insuficientes para treino LoRA; artefato nao salvo.")
         return 1
 
     placeholder = result.get("placeholder", False)
     status = " (placeholder)" if placeholder else ""
-    print(f"✅ Treino LoRA concluído{status}: {result}")
+    print(f"Treino LoRA concluido{status}: {result}")
     return 0
 
 

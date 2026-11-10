@@ -45,6 +45,16 @@ class RecommendationOut(RestaurantOut):
     score: float = 0.0
 
 
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    email: str
+    dietary_preferences: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class RestaurantSearchParams(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)

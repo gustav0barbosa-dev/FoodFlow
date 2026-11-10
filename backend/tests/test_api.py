@@ -102,6 +102,45 @@ def test_restaurant_detail_includes_reviews(monkeypatch) -> None:
     assert body["reviews"][0]["rating"] == 5
 
 
+def test_user_profile_returns_data(monkeypatch) -> None:
+    _use_fake_db()
+    user = User(
+        id=uuid4(),
+        name="Ana Souza",
+        email="ana@test.dev",
+        dietary_preferences=["Vegetariano"],
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_get_user(*_args, **_kwargs):
+        return user
+
+    monkeypatch.setattr(crud, "get_user", fake_get_user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/users/{user.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(user.id)
+    assert body["name"] == "Ana Souza"
+    assert body["dietary_preferences"] == ["Vegetariano"]
+
+
+def test_user_profile_not_found_returns_404(monkeypatch) -> None:
+    _use_fake_db()
+
+    async def fake_get_user(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(crud, "get_user", fake_get_user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/users/{uuid4()}")
+
+    assert response.status_code == 404
+
+
 def test_review_invalid_rating_returns_422() -> None:
     with TestClient(app) as client:
         response = client.post(

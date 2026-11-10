@@ -1,11 +1,12 @@
-import React from 'react'
-import { View, Text, TouchableOpacity, Image } from 'react-native'
+import React, { useEffect } from 'react'
+import { View, Text, TouchableOpacity, Image, ActivityIndicator } from 'react-native'
 import { Link, useRouter } from 'expo-router'
 import { ChevronLeft, Heart } from 'lucide-react-native'
 import { useColorScheme } from 'react-native'
 import { formatBRL } from '@/lib/format'
 import { useRoute } from 'expo-router'
-import { restaurants } from '@/data/mockData'
+import { restaurants as mockRestaurants } from '@/data/mockData'
+import { useCatalogStore } from '@/store/catalogStore'
 
 export default function RestauranteDetalhe() {
   const colorScheme = useColorScheme()
@@ -13,8 +14,36 @@ export default function RestauranteDetalhe() {
   const router = useRouter()
   const route = useRoute()
   const { id } = route.params as { id: string }
+  const catalog = useCatalogStore((state) => state.restaurants)
+  const loading = useCatalogStore((state) => state.loading)
+  const loadCatalog = useCatalogStore((state) => state.load)
 
-  const restaurant = restaurants.find((r: any) => r.id === id)
+  useEffect(() => {
+    if (catalog.length === 0) {
+      void loadCatalog()
+    }
+  }, [catalog.length, loadCatalog])
+
+  // Preferência: catálogo da API (IDs UUID). O mock continua como fallback
+  // para deep links antigos e para desenvolvimento offline.
+  const restaurant =
+    catalog.find((item: any) => item.id === id) ??
+    mockRestaurants.find((item: any) => item.id === id)
+
+  if (loading && !restaurant) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#fff',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <ActivityIndicator size="large" color='#EA1D2C' />
+      </View>
+    )
+  }
 
   if (!restaurant) {
     return (

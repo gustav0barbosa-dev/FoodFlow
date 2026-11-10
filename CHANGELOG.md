@@ -16,8 +16,20 @@ e [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - `mobile`: removido `@types/react-native` redundante (React Native fornece os próprios tipos)
 
 ### Adicionado
-- `app/ml/lora_training.py`: lógica de treino LoRA extraída do script; `scripts/train_lora.py` vira CLI fino
+- `app/ml/train.py`: treino do LightGBM a partir do seed determinístico (`--source seed`), sem depender de PostgreSQL/PostGIS
+- `app/ml/lora_training.py` e `scripts/train_lora.py`: suporte a `--source seed`, treino LoRA real com `transformers`/`peft`/`torch` e metadados do adapter
+- `app/api/users.py`: endpoint `GET /api/v1/users/{id}` com `UserOut` para perfil do usuário
+- Mobile: tela de perfil consome `GET /users/{id}` com `DEFAULT_USER_ID`, mantendo mock como fallback
+- Testes: endpoint de usuário, treino via seed, entidades determinísticas e isolamento do teste de adapter ausente
+- `backend/models/README.md`: política de artefatos, comandos de treino e estado do adapter LoRA
+- `.gitignore`: adapter LoRA (`backend/models/lora_reranker/`) não versionado
+- `docs/arquitetura-tecnica.md`: seção de estado atual, LoRA marcado como experimental, MLflow/DVC/Airflow como planejados e endpoints reais
+- Validação local: LightGBM retreinado com NumPy 1.26.0; LoRA real treinado (40 amostras, 3 épocas) e carregado com `ENABLE_LORA_RERANKER=true`
+- Validação estática do Compose (YAML, serviços, healthchecks e volume `backend_models`); execução real pendente por ausência de Docker
+- `backend/.dockerignore`: exclui `.venv`, caches e testes do contexto de build
 - Testes de regressão para importação tardia do re-ranker, inferência via logits e atribuição A/B estável
+- Testes do pipeline LoRA: geração de amostras positivas/negativas e artefato placeholder
+- Mobile: tela de detalhe do restaurante resolve IDs da API via `catalogStore`, mantendo mock como fallback
 
 ### Alterado
 - Reorganização do repositório em monorepo: frontend movido para `frontend/`, documentação para `docs/`

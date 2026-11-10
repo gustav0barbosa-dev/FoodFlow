@@ -54,9 +54,10 @@ htmlcov/
 # ML artifacts (reprodutíveis via train.py)
 backend/models/*.joblib
 backend/models/*.pkl
+backend/models/lora_reranker/
 
 # Docker
-.dockerignore
+# `backend/.dockerignore` é versionado para limitar o contexto de build.
 
 # Node
 node_modules/

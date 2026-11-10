@@ -20,12 +20,20 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
 | `GET` | `/health` | Health check + status do modelo |
 | `GET` | `/ready` | Readiness com PostgreSQL, Redis e modelo |
 | `GET` | `/api/v1/metrics/recommendations` | Contadores de cache, modelo e popularidade |
+| `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
+| `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados do experimento A/B |
 | `GET` | `/api/v1/restaurants/search?lat=&lon=&radius_km=` | Busca geoespacial (PostGIS `ST_DWithin`) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante + últimas 10 avaliações |
 | `POST` | `/api/v1/reviews` | Cria avaliação com idempotência via `Idempotency-Key` |
-| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=` | Ranking personalizado (Redis → LightGBM → popularidade) |
+| `PUT` | `/api/v1/reviews/{id}` | Atualiza avaliação do próprio usuário |
+| `DELETE` | `/api/v1/reviews/{id}` | Remove avaliação do próprio usuário |
+| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&experiment=` | Ranking personalizado (Redis → LightGBM → popularidade) |
 | `POST` | `/api/v1/recommendations/train` | Treina o modelo com os pedidos existentes |
+| `POST` | `/api/v1/recommendations/train-lora` | Retorna `202`; treino LoRA é offline |
+| `POST` | `/api/v1/recommendations/rerank` | Re-executa o re-ranking sobre scores em cache |
 | `POST` | `/api/v1/events` | Coleta de eventos para o pipeline de ML |
+| `GET` | `/api/v1/users/{id}` | Perfil do usuário (nome, e-mail e preferências) |
 
 `turno` aceita `manha`, `tarde`, `noite` ou `madrugada` (padrão: `tarde`).
 
@@ -61,6 +69,39 @@ Agendamento:
 - **Linux:** cron, por exemplo `0 3 * * * cd /app/backend && .venv/bin/python scripts/batch_score.py`.
 
 Treinar novamente (`POST /api/v1/recommendations/train`) invalida todos os scores; rode o batch em seguida para repopular o cache.
+
+## Treino do LightGBM
+
+```bash
+cd backend
+python -m app.ml.train --source db    # usa os pedidos do PostgreSQL
+python -m app.ml.train --source seed  # seed determinístico, sem PostGIS
+```
+
+O artefato é salvo em `models/recommender.joblib` com metadados JSON. Se o
+modelo não existir ou não carregar, a API usa o fallback por popularidade.
+Treine no mesmo ambiente da API: artefatos gerados com NumPy 2.x não
+carregam em ambientes com NumPy 1.26 (`numpy._core`).
+
+## Re-ranking LoRA (experimental)
+
+Requer as dependências opcionais:
+
+```bash
+cd backend
+pip install -r requirements-llmops.txt
+python scripts/train_lora.py --source seed   # ou --source db
+```
+
+O adapter é salvo em `models/lora_reranker/` e só é carregado com
+`ENABLE_LORA_RERANKER=true`. Sem dependências ou sem adapter real, o
+serving usa o fallback determinístico. O endpoint
+`POST /api/v1/recommendations/train-lora` apenas retorna `202`; o treino
+deve ser executado offline.
+
+A imagem Docker padrão instala apenas `requirements.txt`. Para usar LoRA
+no container, faça um build com `requirements-llmops.txt` ou instale as
+dependências no ambiente de serving.
 
 ## Como rodar
 

@@ -320,6 +320,22 @@ async def train_lora() -> dict[str, Any] | None:
     async with AsyncSessionLocal() as session:
         users, orders, restaurants = await load_training_data(session)
 
+    return _train_from_entities(users, orders, restaurants)
+
+
+def train_lora_from_seed() -> dict[str, Any] | None:
+    """Treina o LoRA a partir do seed determinístico, sem acessar o banco."""
+    from app.ml.train import build_seed_entities
+
+    users, orders, restaurants = build_seed_entities()
+    return _train_from_entities(users, orders, restaurants)
+
+
+def _train_from_entities(
+    users: list[User],
+    orders: list[Order],
+    restaurants: list[Restaurant],
+) -> dict[str, Any] | None:
     samples = build_lora_training_frame(users, orders, restaurants)
     if not samples:
         logger.warning("Nenhuma amostra gerada; treino LoRA ignorado.")

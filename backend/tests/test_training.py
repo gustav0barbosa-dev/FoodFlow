@@ -5,7 +5,12 @@ from app.core.constants import APP_TIMEZONE
 from app.ml import recommender as recommender_module
 from app.ml.features import build_user_features
 from app.ml.recommender import Recommender
-from app.ml.train import _fit_and_evaluate, build_training_frame
+from app.ml.train import (
+    _fit_and_evaluate,
+    build_seed_entities,
+    build_training_frame,
+    train_from_seed,
+)
 from app.models import Order, Restaurant, User
 
 
@@ -112,3 +117,26 @@ def test_recommender_roundtrip_and_prediction(tmp_path, monkeypatch) -> None:
 
     assert set(scores) == {str(restaurant.id) for restaurant in restaurants}
     assert all(0.0 <= score <= 1.0 for score in scores.values())
+
+
+def test_build_seed_entities_is_deterministic() -> None:
+    users, orders, restaurants = build_seed_entities()
+    users_again, orders_again, _ = build_seed_entities()
+
+    assert users and orders and restaurants
+    assert [user.id for user in users] == [user.id for user in users_again]
+    assert [order.id for order in orders] == [order.id for order in orders_again]
+    assert {order.user_id for order in orders} <= {user.id for user in users}
+
+
+def test_train_from_seed_saves_loadable_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(recommender_module, "MODEL_PATH", tmp_path / "model.joblib")
+
+    metrics = train_from_seed()
+
+    assert metrics is not None
+    assert metrics["samples"] > 0
+
+    loaded = Recommender()
+    assert loaded.load() is True
+    assert loaded.metadata["source"] == "seed"

@@ -3,6 +3,7 @@ import contextlib
 import pytest
 
 from app.core.constants import Turno
+from app.ml import reranker as reranker_module
 from app.ml.reranker import (
     LoRAReranker,
     normalize_scores,
@@ -99,9 +100,22 @@ class TestFallbackRerank:
 
 
 class TestRerankerMetadata:
-    def test_load_when_no_adapter_returns_false(self):
-        # Sem artefato salvo, deve retornar False sem erro.
-        assert reranker.load() is False
+    def test_load_when_no_adapter_returns_false(self, tmp_path, monkeypatch):
+        # Isola o teste do adapter real que pode existir em models/.
+        monkeypatch.setattr(reranker_module, "LORA_MODEL_DIR", tmp_path)
+        monkeypatch.setattr(
+            reranker_module,
+            "LORA_CONFIG_FILE",
+            tmp_path / "adapter_config.json",
+        )
+        monkeypatch.setattr(
+            reranker_module,
+            "LORA_WEIGHTS_FILE",
+            tmp_path / "adapter_model.safetensors",
+        )
+
+        instance = LoRAReranker()
+        assert instance.load() is False
 
     def test_optional_deps_are_not_imported_eagerly(self):
         # Importar o módulo não deve importar torch/transformers/peft.
