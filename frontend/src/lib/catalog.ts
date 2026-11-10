@@ -92,3 +92,24 @@ export function buildLegacyIdMap(
 
   return mapping
 }
+
+/**
+ * Equivalente ao `buildLegacyIdMap`, mas a partir do catálogo já mapeado para
+ * a UI. Serve para resolver links antigos (`/restaurante/r1`) mesmo quando a
+ * página de detalhe é aberta diretamente, sem passar pela Home.
+ */
+export function buildCatalogIdMap(
+  restaurants: Restaurant[]
+): Map<string, string> {
+  const currentIdByName = new Map(
+    restaurants.map((restaurant) => [restaurant.name, restaurant.id])
+  )
+  const mapping = new Map<string, string>()
+
+  for (const mock of mockRestaurants) {
+    const currentId = currentIdByName.get(mock.name)
+    if (currentId) mapping.set(mock.id, currentId)
+  }
+
+  return mapping
+}

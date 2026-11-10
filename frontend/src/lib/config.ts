@@ -9,9 +9,20 @@ function readNumber(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1'
+/**
+ * No Windows, `localhost` costuma resolver para IPv6 (`::1`), enquanto o
+ * Docker publica a API apenas em IPv4. Normalizamos loopback para 127.0.0.1
+ * para que o navegador não fique preso até o timeout da requisição.
+ */
+function normalizeApiUrl(value: string) {
+  return value
+    .replace(/\/\/(localhost|\[::1\])(?=[:/]|$)/i, '//127.0.0.1')
+    .replace(/\/+$/, '')
+}
 
-export const API_BASE_URL = apiUrl.replace(/\/+$/, '')
+const apiUrl = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000/api/v1'
+
+export const API_BASE_URL = normalizeApiUrl(apiUrl)
 
 /** Usuário demo do seed: Ana Souza. */
 export const DEFAULT_USER_ID =

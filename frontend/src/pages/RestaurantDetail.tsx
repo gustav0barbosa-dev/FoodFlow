@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed, CreditCard } from 'lucide-react'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
@@ -12,8 +12,9 @@ import { useCartStore } from '@/store/cartStore'
 import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
 import { useCatalogStore } from '@/store/catalogStore'
+import { useCatalog } from '@/hooks/useCatalog'
 import { deleteReview, getRestaurant } from '@/lib/api'
-import { mapApiRestaurantDetail } from '@/lib/catalog'
+import { buildCatalogIdMap, mapApiRestaurantDetail } from '@/lib/catalog'
 import { API_USER_ID, isUuid } from '@/lib/config'
 import { formatBRL } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -33,30 +34,67 @@ export function RestaurantDetail() {
   const [detailLoading, setDetailLoading] = useState(true)
   const [refreshToken, setRefreshToken] = useState(0)
 
-  const catalogRestaurants = useCatalogStore((s) => s.restaurants)
-  const catalogRestaurant = catalogRestaurants.find((r) => r.id === id)
+  const { restaurants: catalogRestaurants, loaded: catalogLoaded } = useCatalog()
+  const catalogIdMap = useMemo(
+    () => buildCatalogIdMap(catalogRestaurants),
+    [catalogRestaurants]
+  )
+  const resolvedId = id ? (isUuid(id) ? id : catalogIdMap.get(id)) : undefined
+  const catalogRestaurant = useMemo(
+    () =>
+      catalogRestaurants.find(
+        (restaurant) => restaurant.id === (resolvedId ?? id)
+      ),
+    [catalogRestaurants, resolvedId, id]
+  )
+  const waitingForCatalog =
+    !!id && !isUuid(id) && !resolvedId && !catalogLoaded
 
   useEffect(() => {
-    if (!id) return
-
-    let active = true
-    const cached = useCatalogStore
-      .getState()
-      .restaurants.find((restaurant) => restaurant.id === id)
-
-    if (!isUuid(id)) {
-      setDetail(cached ?? null)
+    if (!id) {
+      setDetail(null)
       setDetailLoading(false)
       return
     }
 
+    let active = true
+
+    if (waitingForCatalog) {
+      setDetailLoading(true)
+      return () => {
+        active = false
+      }
+    }
+
+    // ID legado/desconhecido que não existe no catálogo atual.
+    if (!resolvedId) {
+      setDetail(null)
+      setDetailLoading(false)
+      return () => {
+        active = false
+      }
+    }
+
+    const cached = useCatalogStore
+      .getState()
+      .restaurants.find((restaurant) => restaurant.id === resolvedId)
+
+    // Enquanto o catálogo ainda é local, exibe o item mock correspondente.
+    if (!isUuid(resolvedId)) {
+      setDetail(cached ?? null)
+      setDetailLoading(false)
+      return () => {
+        active = false
+      }
+    }
+
     setDetailLoading(true)
-    getRestaurant(id)
+    getRestaurant(resolvedId)
       .then((apiDetail) => {
         if (!active) return
         const isRecommended = useCatalogStore
           .getState()
-          .recommendedIds.includes(id)
+          .recommendedIds.includes(resolvedId)
         setDetail(mapApiRestaurantDetail(apiDetail, isRecommended))
       })
       .catch(() => {
@@ -69,12 +107,20 @@ export function RestaurantDetail() {
     return () => {
       active = false
     }
-  }, [id, refreshToken, catalogRestaurants])
+  }, [id, resolvedId, waitingForCatalog, refreshToken])
 
-  const restaurant = detail ?? catalogRestaurant
+  const restaurant =
+    detail && detail.id === resolvedId ? detail : catalogRestaurant
 
-  const userReviews = useReviewsStore((s) =>
-    s.getReviewsForRestaurant(restaurant?.id ?? '')
+  // Sempre deriva a lista de um array estável. O seletor anterior devolvia um
+  // novo array a cada render e causava loop infinito no useSyncExternalStore.
+  const allUserReviews = useReviewsStore((s) => s.reviews)
+  const userReviews = useMemo(
+    () =>
+      allUserReviews.filter(
+        (review) => review.restaurantId === restaurant?.id
+      ),
+    [allUserReviews, restaurant?.id]
   )
   const apiReviews = restaurant?.reviews ?? []
   const apiUserReview = apiReviews.find(

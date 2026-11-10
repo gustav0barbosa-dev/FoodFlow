@@ -29,7 +29,7 @@ import { useSearchTracking } from '@/hooks/useSearchTracking'
 export function Home() {
   const navigate = useNavigate()
   const count = useCartStore((s) => s.count())
-  const { restaurants } = useCatalog()
+  const { restaurants, error: catalogError } = useCatalog()
   const { recommended, experimentGroup } = useRecommendations(
     restaurants
   )
@@ -123,6 +123,16 @@ export function Home() {
           <SearchBar value={query} onChange={setQuery} />
         </div>
       </header>
+
+      {/* Aviso de fallback: deixa claro quando o catálogo local está em uso. */}
+      {catalogError && (
+        <div
+          role="status"
+          className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+        >
+          {catalogError}
+        </div>
+      )}
 
       {/* Recomendados */}
       <section className="px-4 mt-4">

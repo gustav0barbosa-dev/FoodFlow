@@ -3,6 +3,7 @@ import {
   mapApiReview,
   mapApiRestaurant,
   mapApiRestaurantDetail,
+  buildCatalogIdMap,
   buildLegacyIdMap,
 } from '@/lib/catalog'
 import type { ApiRestaurant, ApiReview } from '@/lib/api'
@@ -119,5 +120,22 @@ describe('catalog mappers', () => {
     const mapping = buildLegacyIdMap(apiRestaurants)
 
     expect(mapping.size).toBe(0)
+  })
+
+  it('constrói mapa de IDs legados a partir do catálogo da UI', () => {
+    const catalog = [
+      mapApiRestaurant({ ...apiRestaurant, name: 'Sabor da Vila', id: 'uuid-sabor' }),
+      mapApiRestaurant({
+        ...apiRestaurant,
+        name: 'Verde Vivo — Saudável',
+        id: 'uuid-verde',
+      }),
+    ]
+
+    const mapping = buildCatalogIdMap(catalog)
+
+    expect(mapping.get('r1')).toBe('uuid-sabor')
+    expect(mapping.get('r2')).toBe('uuid-verde')
+    expect(mapping.get('r3')).toBeUndefined()
   })
 })
