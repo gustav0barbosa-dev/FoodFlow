@@ -8,11 +8,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import crud
 from app import main as main_module
+from app.api import interactions as interactions_api
 from app.api import metrics as metrics_api
 from app.api import recommendations as recommendations_api
+from app.api import restaurants as restaurants_api
 from app.database import get_db
+from app.integrations.overpass_client import (
+    OverpassError,
+    OverpassRateLimitError,
+    OverpassTimeoutError,
+)
 from app.main import app
-from app.models import Restaurant, Review, User
+from app.models import Restaurant, Review, User, UserRestaurantInteraction
+from app.services import restaurant_service
 
 
 @pytest.fixture(autouse=True)
@@ -302,18 +310,37 @@ def test_recommendations_without_turno_history_uses_popularity(monkeypatch) -> N
     async def fake_get_orders(*_args, **_kwargs):
         return []
 
+    async def fake_get_interactions(*_args, **_kwargs):
+        return []
+
+    async def fake_get_restaurants_by_ids(*_args, **_kwargs):
+        return []
+
     async def fake_get_scores(*_args, **_kwargs):
         return None
 
-    async def fake_set_scores(user_id, turno, scores):
+    async def fake_set_scores(user_id, turno, scores, group="personalized"):
         writes.append(turno)
         return True
 
     monkeypatch.setattr(crud, "search_restaurants", fake_search)
     monkeypatch.setattr(crud, "get_user", fake_get_user)
     monkeypatch.setattr(crud, "get_user_orders", fake_get_orders)
+    monkeypatch.setattr(crud, "get_user_interactions", fake_get_interactions)
+    monkeypatch.setattr(
+        crud, "get_restaurants_by_ids", fake_get_restaurants_by_ids
+    )
     monkeypatch.setattr(recommendations_api, "get_scores", fake_get_scores)
     monkeypatch.setattr(recommendations_api, "set_scores", fake_set_scores)
+
+    async def fake_assignment(_session, _user_id, _version=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(group_name="personalized")
+
+    monkeypatch.setattr(
+        recommendations_api, "get_or_create_assignment", fake_assignment
+    )
 
     with TestClient(app) as client:
         response = client.get(
@@ -331,20 +358,96 @@ def test_recommendations_without_turno_history_uses_popularity(monkeypatch) -> N
     assert response.json()[0]["score"] == 1.0
 
 
-def test_experiment_assignment_is_stable_across_processes() -> None:
-    user_id = UUID("12345678-1234-5678-1234-567812345678")
-    expected_digest = int.from_bytes(
-        hashlib.sha256(str(user_id).encode("utf-8")).digest()[:8], "big"
+def test_recommendations_demo_mode_returns_manual_strategy_and_context_headers(
+    monkeypatch,
+) -> None:
+    _use_fake_db()
+    restaurant = Restaurant(
+        id=uuid4(),
+        name="Sabor da Vila",
+        address="Rua Teste, 1",
+        categories=["Brasileira"],
+        average_rating=4.8,
+        review_count=120,
+        delivery_fee=5.0,
+        delivery_time_min=20,
+        delivery_time_max=30,
     )
-    expected = (
-        recommendations_api.EXPERIMENT_PERSONALIZED
-        if expected_digest % 2 == 0
-        else recommendations_api.EXPERIMENT_DISTANCE
+    user = User(
+        id=uuid4(),
+        name="Ana Souza",
+        email="ana@test.dev",
+        dietary_preferences=[],
     )
 
-    assert recommendations_api._assign_experiment_group(user_id) == expected
+    async def fake_search(*_args, **_kwargs):
+        return [restaurant]
+
+    async def fake_get_user(*_args, **_kwargs):
+        return user
+
+    async def fake_empty(*_args, **_kwargs):
+        return []
+
+    async def fake_get_scores(*_args, **_kwargs):
+        return None
+
+    async def fake_set_scores(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(crud, "search_restaurants", fake_search)
+    monkeypatch.setattr(crud, "get_user", fake_get_user)
+    monkeypatch.setattr(crud, "get_user_orders", fake_empty)
+    monkeypatch.setattr(crud, "get_user_interactions", fake_empty)
+    monkeypatch.setattr(crud, "get_restaurants_by_ids", fake_empty)
+    monkeypatch.setattr(recommendations_api, "get_scores", fake_get_scores)
+    monkeypatch.setattr(recommendations_api, "set_scores", fake_set_scores)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/recommendations",
+            params={
+                "user_id": str(user.id),
+                "lat": -23.5325,
+                "lon": -46.7939,
+                "turno": "tarde",
+                "mode": "demo",
+                "experiment": "distance",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Experiment-Mode"] == "demo"
+    assert response.headers["X-Experiment-Group"] == "distance"
+    assert response.headers["X-Experiment-Version"]
+    assert response.headers["X-Recommendation-Id"]
+    assert response.headers["X-Model-Version"]
+
+
+def test_experiment_assignment_is_stable_across_processes() -> None:
+    from app.core.config import settings
+    from app.services.experiment import (
+        EXPERIMENT_GROUPS,
+        assign_experiment_group,
+    )
+
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+    expected_digest = int.from_bytes(
+        hashlib.sha256(
+            f"{settings.experiment_version}:{user_id}".encode("utf-8")
+        ).digest()[:8],
+        "big",
+    )
+    expected = EXPERIMENT_GROUPS[expected_digest % len(EXPERIMENT_GROUPS)]
+
+    assert assign_experiment_group(user_id) == expected
     # Repetir a chamada não pode mudar o grupo.
-    assert recommendations_api._assign_experiment_group(user_id) == expected
+    assert assign_experiment_group(user_id) == expected
+    assert set(EXPERIMENT_GROUPS) == {
+        "baseline",
+        "personalized",
+        "distance",
+    }
 
 
 def test_train_lora_endpoint_is_offline_only() -> None:
@@ -443,16 +546,33 @@ def test_recommendation_metrics_endpoint(monkeypatch) -> None:
 def test_ab_test_endpoint(monkeypatch) -> None:
     from app.api import experiment as experiment_api
 
+    async def fake_experiment_metrics(_session):
+        return {
+            "source": "database",
+            "phase": "running",
+            "message": "Métricas calculadas a partir dos eventos persistidos.",
+            "groups": {
+                "baseline": {"impressions": 100, "ctr": 0.2},
+                "personalized": {"impressions": 90, "ctr": 0.3},
+                "distance": {"impressions": 80, "ctr": 0.1},
+            },
+        }
+
     async def fake_ab_metrics():
         return {
             "redis_available": True,
             "total_requests": 100,
+            "baseline_requests": 30,
             "personalized_requests": 52,
-            "distance_requests": 48,
+            "distance_requests": 18,
+            "baseline_share": 0.3,
             "personalized_share": 0.52,
-            "distance_share": 0.48,
+            "distance_share": 0.18,
         }
 
+    monkeypatch.setattr(
+        experiment_api, "get_experiment_metrics", fake_experiment_metrics
+    )
     monkeypatch.setattr(
         experiment_api, "get_ab_test_metrics", fake_ab_metrics
     )
@@ -462,12 +582,11 @@ def test_ab_test_endpoint(monkeypatch) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["redis_available"] is True
-    assert body["total_requests"] == 100
-    assert body["personalized_requests"] == 52
-    assert body["distance_requests"] == 48
-    assert body["personalized_share"] == 0.52
-    assert body["distance_share"] == 0.48
+    assert body["source"] == "database"
+    assert body["phase"] == "running"
+    assert body["groups"]["personalized"]["ctr"] == 0.3
+    assert body["request_counters"]["baseline_requests"] == 30
+    assert body["request_counters"]["personalized_share"] == 0.52
 
 
 def test_drift_endpoint(monkeypatch) -> None:
@@ -505,3 +624,331 @@ def test_drift_endpoint(monkeypatch) -> None:
     assert body["overall_status"] == "ok"
     assert body["features_monitored"] == 2
     assert body["features"][0]["feature"] == "restaurant_rating"
+
+
+def test_nearby_requires_coordinates() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/restaurants/nearby")
+
+    assert response.status_code == 422
+
+
+def test_nearby_rejects_unsupported_category() -> None:
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/restaurants/nearby",
+            params={
+                "lat": -23.5227,
+                "lon": -46.1878,
+                "radius": 3000,
+                "category": "pizza",
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_nearby_returns_osm_restaurants(monkeypatch) -> None:
+    async def fake_find_nearby(*_args, **_kwargs):
+        return [
+            {
+                "osm_id": 123456789,
+                "osm_type": "node",
+                "name": "Cantina da Praça",
+                "latitude": -23.5227,
+                "longitude": -46.1878,
+                "category": "restaurant",
+                "cuisine": "italian",
+                "address": {
+                    "street": "Rua Teste",
+                    "number": "100",
+                    "city": "Mogi das Cruzes",
+                    "postcode": None,
+                },
+                "phone": "+55 11 99999-0000",
+                "website": "https://exemplo.test",
+                "opening_hours": "Mo-Su 11:00-23:00",
+                "osm_url": "https://www.openstreetmap.org/node/123456789",
+                "distance_km": 0.42,
+            }
+        ]
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "find_nearby_restaurants",
+        fake_find_nearby,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/restaurants/nearby",
+            params={
+                "lat": -23.5227,
+                "lon": -46.1878,
+                "radius": 3000,
+                "category": "restaurant",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "OpenStreetMap"
+    assert body["count"] == 1
+    restaurant = body["restaurants"][0]
+    assert restaurant["osm_id"] == 123456789
+    assert restaurant["osm_type"] == "node"
+    assert restaurant["name"] == "Cantina da Praça"
+    assert restaurant["address"]["city"] == "Mogi das Cruzes"
+    assert restaurant["distance_km"] == 0.42
+
+
+def test_nearby_rate_limit_returns_503(monkeypatch) -> None:
+    async def fake_find_nearby(*_args, **_kwargs):
+        raise OverpassRateLimitError("limite de uso")
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "find_nearby_restaurants",
+        fake_find_nearby,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/restaurants/nearby",
+            params={"lat": -23.5227, "lon": -46.1878},
+        )
+
+    assert response.status_code == 503
+
+
+def test_nearby_timeout_returns_504(monkeypatch) -> None:
+    async def fake_find_nearby(*_args, **_kwargs):
+        raise OverpassTimeoutError("tempo esgotado")
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "find_nearby_restaurants",
+        fake_find_nearby,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/restaurants/nearby",
+            params={"lat": -23.5227, "lon": -46.1878},
+        )
+
+    assert response.status_code == 504
+
+
+def test_nearby_upstream_failure_returns_502(monkeypatch) -> None:
+    async def fake_find_nearby(*_args, **_kwargs):
+        raise OverpassError("Overpass API respondeu 500")
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "find_nearby_restaurants",
+        fake_find_nearby,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/restaurants/nearby",
+            params={"lat": -23.5227, "lon": -46.1878},
+        )
+
+    assert response.status_code == 502
+
+def _osm_restaurant() -> Restaurant:
+    return Restaurant(
+        id=uuid4(),
+        name="Cantina da Praca",
+        address="",
+        phone=None,
+        categories=["restaurant"],
+        average_rating=0.0,
+        review_count=0,
+        delivery_fee=0.0,
+        delivery_time_min=20,
+        delivery_time_max=30,
+        source="osm",
+        osm_type="node",
+        osm_id=123,
+        latitude=-23.55,
+        longitude=-46.63,
+        cuisine="italian",
+        website=None,
+        opening_hours=None,
+        osm_url="https://www.openstreetmap.org/node/123",
+    )
+
+
+def test_osm_detail_returns_null_for_missing_fields(monkeypatch) -> None:
+    _use_fake_db()
+    restaurant = _osm_restaurant()
+
+    async def fake_detail(*_args, **_kwargs):
+        return restaurant
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "get_osm_restaurant_detail",
+        fake_detail,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/restaurants/osm/node/123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "osm"
+    assert payload["osm_type"] == "node"
+    assert payload["osm_id"] == 123
+    assert payload["phone"] is None
+    assert payload["website"] is None
+    assert payload["opening_hours"] is None
+    assert payload["reviews"] == []
+    assert payload["latitude"] == -23.55
+
+
+def test_osm_detail_rejects_invalid_type() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/restaurants/osm/invalid/123")
+
+    assert response.status_code == 422
+
+
+def test_osm_detail_missing_returns_404(monkeypatch) -> None:
+    _use_fake_db()
+
+    async def fake_detail(*_args, **_kwargs):
+        raise restaurant_service.OsmRestaurantNotFoundError(
+            "Estabelecimento nao encontrado."
+        )
+
+    monkeypatch.setattr(
+        restaurants_api.restaurant_service,
+        "get_osm_restaurant_detail",
+        fake_detail,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/restaurants/osm/node/999")
+
+    assert response.status_code == 404
+
+
+def test_create_interaction_endpoint(monkeypatch) -> None:
+    _use_fake_db()
+    user_id = uuid4()
+    restaurant_id = uuid4()
+    interaction = UserRestaurantInteraction(
+        id=uuid4(),
+        user_id=user_id,
+        restaurant_id=restaurant_id,
+        interaction_type="PURCHASE",
+        purchase_value=59.9,
+        experiment_group="personalized",
+        recommendation_position=2,
+        model_version="lgbm-test",
+        event_metadata={"source": "home_featured"},
+        created_at=datetime.now(timezone.utc),
+    )
+    captured: dict = {}
+
+    async def fake_record(_session, **kwargs):
+        captured.update(kwargs)
+        return interaction, True
+
+    monkeypatch.setattr(
+        interactions_api.interaction_service,
+        "record_interaction",
+        fake_record,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/interactions",
+            json={
+                "user_id": str(user_id),
+                "restaurant_id": str(restaurant_id),
+                "interaction_type": "PURCHASE",
+                "purchase_value": 59.9,
+                "idempotency_key": "order-1",
+                "experiment_group": "personalized",
+                "recommendation_position": 2,
+                "model_version": "lgbm-test",
+                "metadata": {"source": "home_featured"},
+            },
+        )
+
+    assert response.status_code == 201
+    assert captured["interaction_type"] == "PURCHASE"
+    assert captured["purchase_value"] == 59.9
+    assert captured["idempotency_key"] == "order-1"
+    assert captured["experiment_group"] == "personalized"
+    assert captured["recommendation_position"] == 2
+    assert captured["model_version"] == "lgbm-test"
+    assert captured["event_metadata"] == {"source": "home_featured"}
+    body = response.json()
+    assert body["interaction_type"] == "PURCHASE"
+    assert body["experiment_group"] == "personalized"
+    assert body["event_metadata"] == {"source": "home_featured"}
+
+
+def test_create_interaction_unknown_user_returns_404(monkeypatch) -> None:
+    _use_fake_db()
+
+    async def fake_record(*_args, **_kwargs):
+        raise interactions_api.interaction_service.InteractionUserNotFoundError(
+            "Usuario nao encontrado."
+        )
+
+    monkeypatch.setattr(
+        interactions_api.interaction_service,
+        "record_interaction",
+        fake_record,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/interactions",
+            json={
+                "user_id": str(uuid4()),
+                "restaurant_id": str(uuid4()),
+                "interaction_type": "VIEW",
+            },
+        )
+
+    assert response.status_code == 404
+
+
+def test_user_preferences_endpoint(monkeypatch) -> None:
+    _use_fake_db()
+    user_id = uuid4()
+
+    async def fake_profile(*_args, **_kwargs):
+        return {
+            "user_id": user_id,
+            "total_interactions": 1,
+            "views": 0,
+            "clicks": 0,
+            "favorites": 0,
+            "purchases": 1,
+            "total_spent": 59.9,
+            "average_purchase_value": 59.9,
+            "top_categories": [{"name": "Fast food", "score": 1.0}],
+            "top_cuisines": [],
+            "top_restaurants": [],
+        }
+
+    monkeypatch.setattr(
+        interactions_api.interaction_service,
+        "get_user_preference_profile",
+        fake_profile,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/users/{user_id}/preferences")
+
+    assert response.status_code == 200
+    assert response.json()["purchases"] == 1

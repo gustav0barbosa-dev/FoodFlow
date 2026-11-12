@@ -14,10 +14,13 @@ from app.api import (
     drift,
     events,
     experiment,
+    interactions,
     metrics,
+    ml,
     recommendations,
     restaurants,
     reviews,
+    street_view,
     users,
 )
 from app.cache.redis_client import close_redis, ping_redis
@@ -73,9 +76,12 @@ app.include_router(restaurants.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(interactions.router, prefix="/api/v1")
 app.include_router(recommendations.router, prefix="/api/v1")
 app.include_router(drift.router, prefix="/api/v1")
 app.include_router(experiment.router, prefix="/api/v1")
+app.include_router(ml.router, prefix="/api/v1")
+app.include_router(street_view.router, prefix="/api/v1")
 app.include_router(metrics.router, prefix="/api/v1")
 
 

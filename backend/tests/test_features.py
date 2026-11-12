@@ -3,12 +3,14 @@ from uuid import uuid4
 
 from app.core.constants import APP_TIMEZONE
 from app.ml.features import (
+    affinity_scores,
+    blend_with_affinity,
     build_candidate_features,
     build_user_features,
     has_turno_history,
     turno_da_hora,
 )
-from app.models import Order, Restaurant, User
+from app.models import Order, Restaurant, User, UserRestaurantInteraction
 
 
 def make_order(
@@ -133,3 +135,90 @@ def test_has_turno_history_uses_local_timezone() -> None:
     assert has_turno_history(orders, "noite") is True
     assert has_turno_history(orders, "tarde") is False
     assert has_turno_history([], "tarde") is False
+
+
+def make_interaction(
+    restaurant_id,
+    interaction_type: str,
+    *,
+    days_ago: int = 0,
+    purchase_value: float | None = None,
+) -> UserRestaurantInteraction:
+    return UserRestaurantInteraction(
+        id=uuid4(),
+        user_id=uuid4(),
+        restaurant_id=restaurant_id,
+        interaction_type=interaction_type,
+        purchase_value=purchase_value,
+        created_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
+    )
+
+
+def test_purchase_weighs_more_than_view_in_user_features() -> None:
+    purchased = make_restaurant()
+    viewed = make_restaurant()
+    interactions = [
+        make_interaction(purchased.id, "PURCHASE", purchase_value=42.0),
+        make_interaction(viewed.id, "VIEW"),
+    ]
+
+    features = build_user_features(
+        [],
+        user=None,
+        interactions=interactions,
+        restaurants={purchased.id: purchased, viewed.id: viewed},
+    )
+
+    assert features["purchase_count"] == 1
+    assert features["view_count"] == 1
+    assert features["total_spent"] == 42.0
+    assert (
+        features["restaurant_affinity"][str(purchased.id)]
+        > features["restaurant_affinity"][str(viewed.id)]
+    )
+
+
+def test_candidate_features_include_restaurant_history() -> None:
+    favorite = make_restaurant()
+    interactions = [
+        make_interaction(favorite.id, "VIEW"),
+        make_interaction(favorite.id, "FAVORITE"),
+        make_interaction(favorite.id, "PURCHASE", purchase_value=60.0),
+    ]
+    features = build_user_features(
+        [], user=None, interactions=interactions, restaurants=[favorite]
+    )
+
+    row = build_candidate_features(features, favorite, "tarde")
+
+    assert row["restaurant_interaction_count"] == 3.0
+    assert row["restaurant_view_count"] == 1.0
+    assert row["restaurant_purchase_count"] == 1.0
+    assert row["restaurant_is_favorite"] == 1.0
+
+
+def test_affinity_and_blend_favor_purchased_restaurant() -> None:
+    purchased = make_restaurant()
+    untouched = make_restaurant()
+    untouched.categories = ["Japonesa"]
+    interactions = [
+        make_interaction(purchased.id, "PURCHASE", purchase_value=30.0)
+    ]
+    features = build_user_features(
+        [], user=None, interactions=interactions, restaurants=[purchased, untouched]
+    )
+
+    affinity = affinity_scores(features, [purchased, untouched])
+    assert affinity[str(purchased.id)] > affinity[str(untouched.id)]
+
+    blended = blend_with_affinity(
+        {str(purchased.id): 0.4, str(untouched.id): 0.6},
+        affinity,
+    )
+    assert blended[str(purchased.id)] > blended[str(untouched.id)]
+
+
+def test_blend_without_history_keeps_base_ranking() -> None:
+    blended = blend_with_affinity({"a": 1.0, "b": 0.0}, {})
+
+    assert blended["a"] > blended["b"]

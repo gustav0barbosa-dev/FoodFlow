@@ -47,7 +47,6 @@ from app.ml.lora_training import _try_train_with_llm_deps, build_lora_training_f
 from app.ml.recommender import popularity_scores, normalize_scores
 from app.ml.reranker import LoRAReranker
 from app.ml.train import (
-    NEGATIVES_PER_POSITIVE,
     RANDOM_SEED,
     build_seed_entities,
     build_training_frame,
@@ -318,7 +317,11 @@ def evaluate_with_entities(
             "candidates_per_context": len(restaurants),
             "training_rows": int(len(frame)),
             "training_positives": int(frame["clicked"].sum()),
-            "negatives_per_positive": NEGATIVES_PER_POSITIVE,
+            "negatives_per_positive": round(
+                (len(frame) - int(frame["clicked"].sum()))
+                / max(int(frame["clicked"].sum()), 1),
+                2,
+            ),
         },
         "metrics": {},
         "lora": {},

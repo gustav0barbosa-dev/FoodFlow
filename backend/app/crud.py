@@ -1,12 +1,46 @@
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from geoalchemy2 import Geometry
+from sqlalchemy import cast, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Event, Order, Restaurant, Review, User
+from app.models import (
+    Event,
+    Order,
+    Restaurant,
+    Review,
+    User,
+    UserRestaurantInteraction,
+)
 from app.schemas import RestaurantSearchParams
+
+
+def _coordinate_columns():
+    """Extrai latitude/longitude do ponto PostGIS ``location``.
+
+    O catálogo próprio guarda apenas a geografia; os campos ``latitude`` e
+    ``longitude`` existem para registros do OSM. Calculamos as coordenadas na
+    própria query para que ambos os formatos exponham o mesmo contrato.
+    """
+    point = cast(Restaurant.location, Geometry("POINT", srid=4326))
+    return (
+        func.ST_Y(point).label("location_latitude"),
+        func.ST_X(point).label("location_longitude"),
+    )
+
+
+def _apply_coordinates(
+    restaurant: Restaurant,
+    latitude: float | None,
+    longitude: float | None,
+) -> None:
+    if restaurant.latitude is None and latitude is not None:
+        restaurant.latitude = float(latitude)
+    if restaurant.longitude is None and longitude is not None:
+        restaurant.longitude = float(longitude)
+
 
 
 def _geography_point(lat: float, lon: float):
@@ -21,7 +55,7 @@ def build_search_statement(params: RestaurantSearchParams):
     distance = func.ST_Distance(Restaurant.location, point) / 1000.0
 
     return (
-        select(Restaurant, distance.label("distance_km"))
+        select(Restaurant, distance.label("distance_km"), *_coordinate_columns())
         .where(
             func.ST_DWithin(
                 Restaurant.location,
@@ -44,10 +78,11 @@ async def search_restaurants(
     statement = build_search_statement(params)
     rows = (await session.execute(statement)).all()
     restaurants: list[Restaurant] = []
-    for restaurant, distance_km in rows:
+    for restaurant, distance_km, latitude, longitude in rows:
         restaurant.distance_km = (
             round(float(distance_km), 2) if distance_km is not None else None
         )
+        _apply_coordinates(restaurant, latitude, longitude)
         restaurants.append(restaurant)
     return restaurants
 
@@ -56,10 +91,58 @@ async def get_restaurant(
     session: AsyncSession,
     restaurant_id: UUID,
 ) -> Restaurant | None:
-    result = await session.execute(
-        select(Restaurant).where(Restaurant.id == restaurant_id)
-    )
-    return result.scalars().first()
+    row = (
+        await session.execute(
+            select(Restaurant, *_coordinate_columns()).where(
+                Restaurant.id == restaurant_id
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    restaurant = row[0]
+    _apply_coordinates(restaurant, row[1], row[2])
+    return restaurant
+
+
+async def get_restaurant_by_osm(
+    session: AsyncSession,
+    osm_type: str,
+    osm_id: int,
+) -> Restaurant | None:
+    row = (
+        await session.execute(
+            select(Restaurant, *_coordinate_columns()).where(
+                Restaurant.osm_type == osm_type,
+                Restaurant.osm_id == osm_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    restaurant = row[0]
+    _apply_coordinates(restaurant, row[1], row[2])
+    return restaurant
+
+
+async def get_restaurants_by_ids(
+    session: AsyncSession,
+    restaurant_ids: set[UUID] | list[UUID],
+) -> list[Restaurant]:
+    if not restaurant_ids:
+        return []
+    rows = (
+        await session.execute(
+            select(Restaurant, *_coordinate_columns()).where(
+                Restaurant.id.in_(restaurant_ids)
+            )
+        )
+    ).all()
+    restaurants: list[Restaurant] = []
+    for restaurant, latitude, longitude in rows:
+        _apply_coordinates(restaurant, latitude, longitude)
+        restaurants.append(restaurant)
+    return restaurants
 
 
 async def get_restaurant_reviews(
@@ -192,6 +275,86 @@ async def delete_review(
         await refresh_restaurant_rating(session, restaurant)
 
     await session.commit()
+
+
+async def get_user_interactions(
+    session: AsyncSession,
+    user_id: UUID,
+    limit: int | None = None,
+) -> list[UserRestaurantInteraction]:
+    statement = (
+        select(UserRestaurantInteraction)
+        .where(UserRestaurantInteraction.user_id == user_id)
+        .order_by(UserRestaurantInteraction.created_at.desc())
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def create_interaction(
+    session: AsyncSession,
+    user: User,
+    restaurant: Restaurant,
+    interaction_type: str,
+    purchase_value: float | None,
+    idempotency_key: str | None,
+    experiment_group: str | None = None,
+    experiment_mode: str = "experiment",
+    experiment_version: str | None = None,
+    recommendation_id: str | None = None,
+    recommendation_position: int | None = None,
+    model_version: str | None = None,
+    event_metadata: dict | None = None,
+) -> tuple[UserRestaurantInteraction, bool]:
+    """Registra uma interação, com idempotência opcional para compras."""
+    if idempotency_key:
+        existing = (
+            await session.execute(
+                select(UserRestaurantInteraction).where(
+                    UserRestaurantInteraction.idempotency_key == idempotency_key
+                )
+            )
+        ).scalars().first()
+        if existing is not None:
+            return existing, False
+
+    interaction = UserRestaurantInteraction(
+        user_id=user.id,
+        restaurant_id=restaurant.id,
+        interaction_type=interaction_type,
+        purchase_value=purchase_value,
+        idempotency_key=idempotency_key,
+        experiment_group=experiment_group,
+        experiment_mode=experiment_mode,
+        experiment_version=experiment_version,
+        recommendation_id=recommendation_id,
+        recommendation_position=recommendation_position,
+        model_version=model_version,
+        event_metadata=event_metadata or {},
+    )
+    session.add(interaction)
+
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if not idempotency_key:
+            raise
+        existing = (
+            await session.execute(
+                select(UserRestaurantInteraction).where(
+                    UserRestaurantInteraction.idempotency_key == idempotency_key
+                )
+            )
+        ).scalars().first()
+        if existing is None:
+            raise
+        return existing, False
+
+    await session.refresh(interaction)
+    return interaction, True
 
 
 async def create_event(

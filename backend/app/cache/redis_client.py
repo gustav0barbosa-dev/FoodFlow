@@ -22,8 +22,10 @@ RECOMMENDATION_METRIC_KEYS: dict[str, str] = {
     "distance_scores": "metrics:reco:distance_scores",
 }
 
-# Chaves de métrica por grupo do experimento A/B.
+# Chaves de métrica por grupo do experimento A/B. São apenas diagnósticas:
+# a fonte oficial das métricas é o banco (ver services/experiment.py).
 AB_TEST_METRIC_KEYS: dict[str, str] = {
+    "baseline_requests": "metrics:ab:baseline:requests",
     "personalized_requests": "metrics:ab:personalized:requests",
     "distance_requests": "metrics:ab:distance:requests",
 }
@@ -43,8 +45,10 @@ async def close_redis() -> None:
         _redis = None
 
 
-async def get_scores(user_id: str, turno: str) -> dict[str, float] | None:
-    key = f"reco:scores:{user_id}:{turno}"
+async def get_scores(
+    user_id: str, turno: str, group: str = "personalized"
+) -> dict[str, float] | None:
+    key = f"reco:scores:{user_id}:{turno}:{group}"
     try:
         client = await get_redis()
         data = await client.get(key)
@@ -63,9 +67,10 @@ async def set_scores(
     user_id: str,
     turno: str,
     scores: dict[str, float],
+    group: str = "personalized",
     ttl: int = SCORE_TTL_SECONDS,
 ) -> bool:
-    key = f"reco:scores:{user_id}:{turno}"
+    key = f"reco:scores:{user_id}:{turno}:{group}"
     try:
         client = await get_redis()
         await client.set(key, json.dumps(scores), ex=ttl)
@@ -84,6 +89,22 @@ async def clear_scores() -> int:
             deleted += int(await client.delete(key))
     except RedisError as exc:
         logger.warning("Falha ao invalidar scores no Redis: %s", exc)
+    return deleted
+
+
+async def clear_user_scores(user_id: str) -> int:
+    """Invalida os scores em cache de um usuário (após nova interação)."""
+    deleted = 0
+    try:
+        client = await get_redis()
+        async for key in client.scan_iter(match=f"reco:scores:{user_id}:*"):
+            deleted += int(await client.delete(key))
+    except RedisError as exc:
+        logger.warning(
+            "Falha ao invalidar scores do usuário %s no Redis: %s",
+            user_id,
+            exc,
+        )
     return deleted
 
 
@@ -140,7 +161,7 @@ async def get_recommendation_metrics() -> dict[str, Any]:
 
 async def increment_ab_test_metrics(group: str) -> bool:
     """Incrementa o contador de requisições de um grupo do experimento A/B."""
-    key = AB_TEST_METRIC_KEYS.get(group)
+    key = AB_TEST_METRIC_KEYS.get(f"{group}_requests")
     if not key:
         return False
 
@@ -167,21 +188,24 @@ async def get_ab_test_metrics() -> dict[str, Any]:
     for name, value in zip(AB_TEST_METRIC_KEYS, values, strict=True):
         metrics[name] = int(value or 0)
 
-    total = metrics["personalized_requests"] + metrics["distance_requests"]
-    personalized_share = (
-        round(metrics["personalized_requests"] / total, 4) if total else 0.0
+    total = (
+        metrics["baseline_requests"]
+        + metrics["personalized_requests"]
+        + metrics["distance_requests"]
     )
-    distance_share = (
-        round(metrics["distance_requests"] / total, 4) if total else 0.0
-    )
+
+    def share(value: int) -> float:
+        return round(value / total, 4) if total else 0.0
 
     return {
         "redis_available": True,
         "total_requests": total,
+        "baseline_requests": metrics["baseline_requests"],
         "personalized_requests": metrics["personalized_requests"],
         "distance_requests": metrics["distance_requests"],
-        "personalized_share": personalized_share,
-        "distance_share": distance_share,
+        "baseline_share": share(metrics["baseline_requests"]),
+        "personalized_share": share(metrics["personalized_requests"]),
+        "distance_share": share(metrics["distance_requests"]),
     }
 
 
