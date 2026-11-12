@@ -308,8 +308,8 @@ para que o artefato sobreviva à recriação do container.
 | `GET` | `/ready` | Readiness (PostgreSQL, Redis, modelo) |
 | `GET` | `/api/v1/metrics/recommendations` | Métricas de cache hit rate e estratégia |
 | `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
-| `GET` | `/api/v1/experiment/ab-test` | Métricas dos 3 grupos calculadas a partir dos eventos no banco (Redis só como diagnóstico) |
-| `GET` | `/api/v1/ml/metrics` | Métricas do último treino offline (split temporal, P@K/R@K/NDCG@K/MAP@K, baselines) |
+| `GET` | `/api/v1/experiment/ab-test` | Métricas dos 3 grupos a partir dos eventos no banco (Redis só como diagnóstico), com coorte válida, contaminação, IC bootstrap por usuário e plano de amostra |
+| `GET` | `/api/v1/ml/metrics` | Relatório v3 do último treino offline (split temporal, P@K/R@K/NDCG@K/MAP@K, ILD, novidade, PR AUC/Brier/Log Loss, baselines e comparação com produção) |
 | `GET` | `/api/v1/street-view/metadata` | Disponibilidade do panorama nas coordenadas |
 | `GET` | `/api/v1/street-view/image` | Proxy da imagem do Street View (chave somente no backend) |
 | `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
@@ -380,17 +380,33 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 
 ### Componentes de IA implementados
 
-- **LightGBM**: classificação binária (clicou/não clicou) com features por turno
+- **LightGBM**: classificação binária do alvo `purchased` (compra/pedido observado, não clique) com features por turno
 - **Interações**: `IMPRESSION`/`VIEW`/`VIEW_DETAILS`/`CLICK`/`FAVORITE`/`PURCHASE`/`DISMISS` com pesos, decaimento de recência e contexto A/B (grupo, posição e versão do modelo); afinidade reordena o ranking sem retreinar
 - **LoRA**: extensão experimental de re-ranking; carregada apenas com `ENABLE_LORA_RERANKER=true` e dependências de LLMOps instaladas. Sem adapter, usa fallback determinístico.
 - **Drift monitoring**: PSI (Population Stability Index) comparando treino vs. serving
-- **A/B test**: três grupos estáveis — `baseline` (popularidade), `personalized` (LightGBM + afinidade) e `distance`; métricas lidas dos eventos oficiais no banco, com fase explícita (`collecting`/`insufficient_data`/`ready`/`statistical_analysis`). `ready` é apenas volume mínimo descritivo; significância só em `statistical_analysis`, com intervalo de Wilson e correção de Bonferroni. Modo `demo` fica fora das métricas oficiais.
-- **Métricas de treino**: split temporal por contexto, P@K, R@K, NDCG@K, MAP@K, cobertura de catálogo/usuários, baselines com os mesmos candidatos, hash do dataset e decisão de promoção/rollback em `GET /api/v1/ml/metrics`
+- **A/B test**: três grupos estáveis — `baseline` (popularidade), `personalized` (LightGBM + afinidade) e `distance`; métricas lidas dos eventos oficiais no banco, com fase explícita (`collecting`/`insufficient_data`/`ready`/`statistical_analysis`). `ready` é apenas volume mínimo descritivo; a inferência só ocorre em `statistical_analysis`, sobre a **coorte válida** (usuários contaminados excluídos), com **bootstrap agrupado por usuário**, intervalo de confiança e correção de Bonferroni. O teste z por impressão é apenas fallback explícito. Modo `demo` fica fora das métricas oficiais.
+- **Métricas de treino (schema v3)**: alvo `purchased`, negativos observados × não observados, split temporal por contexto, P@K, R@K, NDCG@K, MAP@K, ILD@K, novidade, cobertura de catálogo/usuários, IC bootstrap por usuário, ROC AUC/PR AUC/Brier/Log Loss, baselines com os mesmos candidatos, comparação com o modelo em produção, hash do dataset e decisão de promoção/rollback em `GET /api/v1/ml/metrics`
 - **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
+
+### Avaliação e métricas (v2/v3)
+
+A especificação completa está em
+[`docs/especificacao-metricas-v2.md`](docs/especificacao-metricas-v2.md).
+Pontos centrais:
+
+- alvo `purchased` (compra observada) e negativos não observados com peso
+  reduzido apenas no treino;
+- métricas de ranking por contexto com macro-média, IC bootstrap por usuário,
+  ILD e novidade;
+- ROC AUC, PR AUC, Brier e Log Loss condicionais a amostras e duas classes;
+- A/B com coorte válida, inferência por usuário e plano de amostra;
+- comparação do candidato com o modelo em produção nos mesmos contextos;
+- treino `--source seed` é apenas avaliação e **nunca** substitui o modelo em
+  produção.
 
 ### Avaliação offline do LoRA
 
-`python scripts/evaluate_lora.py --source seed` treina em pedidos antigos e avalia em pedidos recentes (split temporal), sem vazamento de dados e sem sobrescrever o adapter de serving. Resultado com a janela de 7 dias:
+`python scripts/evaluate_lora.py --source seed` treina em pedidos antigos e avalia em pedidos recentes (split temporal), sem vazamento de dados e sem sobrescrever o adapter de serving. Os números abaixo são **avaliação offline do seed**, não treino com dados reais de produção. Resultado com a janela de 7 dias:
 
 | Estratégia | AUC | NDCG@5 |
 |---|---|---|
@@ -421,7 +437,7 @@ O LoRA não superou o LightGBM em nenhuma das janelas testadas (7, 10 e 14 dias)
 - [x] Observabilidade (request ID, latência, readiness, métricas)
 - [x] Monitoramento de drift (PSI)
 - [x] Estrutura de re-ranking com LoRA (opcional; fallback por padrão)
-- [x] Avaliação offline do LoRA com AUC/NDCG@5 (LightGBM superior; LoRA mantido experimental)
+- [x] Avaliação offline do LoRA com AUC/NDCG@5 no seed (LightGBM superior; LoRA mantido experimental; não é evidência de produção)
 - [x] Feed personalizado no mobile consumindo `GET /recommendations`
 - [x] Experimento A/B de recomendações
 - [x] Descoberta no OpenStreetMap com detalhe persistido e mesma tela do catálogo

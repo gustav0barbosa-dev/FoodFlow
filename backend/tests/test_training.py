@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
+
 from app.core.constants import APP_TIMEZONE
 from app.ml import recommender as recommender_module
 from app.ml import train as train_module
@@ -8,17 +10,21 @@ from app.ml.features import build_user_features
 from app.ml.recommender import Recommender
 from app.ml.train import (
     InsufficientTrainingDataError,
+    UNOBSERVED_NEGATIVE_WEIGHT,
     _dataset_hash,
     _fit_and_evaluate,
+    _predictive_metrics,
+    _promotion_decision,
     _roc_auc,
     _split_frame,
     build_contexts,
     build_seed_entities,
     build_training_frame,
+    compute_ranking_metrics,
     feature_columns,
     train_from_seed,
 )
-from app.models import Order, Restaurant, User
+from app.models import Order, Restaurant, User, UserRestaurantInteraction
 
 
 def make_restaurant(index: int) -> Restaurant:
@@ -83,15 +89,15 @@ def test_build_training_frame_has_positives_and_negatives() -> None:
     frame = build_training_frame(users, orders, restaurants, seed=7)
 
     assert not frame.empty
-    assert set(frame["clicked"].unique()) == {0, 1}
-    assert int(frame["clicked"].sum()) == 6
-    assert len(frame) > int(frame["clicked"].sum())
+    assert set(frame["purchased"].unique()) == {0, 1}
+    assert int(frame["purchased"].sum()) == 6
+    assert len(frame) > int(frame["purchased"].sum())
     assert "restaurant_rating" in frame.columns
     assert "tarde_avg_value" in frame.columns
     # Cada ocasião de pedido vira um contexto de treino próprio.
-    assert int(frame[frame["clicked"] == 1]["is_tarde"].sum()) == 3
-    assert int(frame[frame["clicked"] == 1]["is_noite"].sum()) == 3
-    assert int(frame[frame["clicked"] == 1]["is_manha"].sum()) == 0
+    assert int(frame[frame["purchased"] == 1]["is_tarde"].sum()) == 3
+    assert int(frame[frame["purchased"] == 1]["is_noite"].sum()) == 3
+    assert int(frame[frame["purchased"] == 1]["is_manha"].sum()) == 0
 
 
 def test_fit_and_evaluate_returns_metrics() -> None:
@@ -216,7 +222,7 @@ def test_dataset_hash_and_metrics_are_reproducible() -> None:
 def test_training_rejects_dataset_without_both_classes() -> None:
     users, orders, restaurants = build_fixture()
     frame = build_training_frame(users, orders, restaurants)
-    frame["clicked"] = 1
+    frame["purchased"] = 1
 
     try:
         _fit_and_evaluate(frame, orders=orders)
@@ -304,7 +310,7 @@ def test_train_from_seed_writes_reproducible_report(tmp_path, monkeypatch) -> No
 
     assert result is not None
     report = reports[-1]
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
     assert report["dataset"]["hash"] == result["dataset_hash"]
     assert report["dataset"]["contexts"] == 30
     assert report["dataset"]["positives"] == 30
@@ -319,3 +325,170 @@ def test_train_from_seed_writes_reproducible_report(tmp_path, monkeypatch) -> No
         "rejected_quality",
         "insufficient_evidence",
     }
+
+
+def make_interaction(user_id, restaurant_id, *, days_ago: int, hour: int = 9):
+    local = (datetime.now(APP_TIMEZONE) - timedelta(days=days_ago)).replace(
+        hour=hour, minute=0, second=0, microsecond=0
+    )
+    return UserRestaurantInteraction(
+        user_id=user_id,
+        restaurant_id=restaurant_id,
+        interaction_type="IMPRESSION",
+        created_at=local.astimezone(timezone.utc),
+    )
+
+
+def test_unobserved_negatives_receive_lower_weight() -> None:
+    users, orders, restaurants = build_fixture()
+    frame = build_training_frame(users, orders, restaurants)
+
+    negatives = frame[frame["purchased"] == 0]
+    assert not negatives.empty
+    assert (negatives["_observed"] == False).all()  # noqa: E712
+    assert (negatives["_sample_weight"] == UNOBSERVED_NEGATIVE_WEIGHT).all()
+    positives = frame[frame["purchased"] == 1]
+    assert (positives["_sample_weight"] == 1.0).all()
+
+
+def test_observed_negatives_receive_full_weight() -> None:
+    users, orders, restaurants = build_fixture()
+    user = users[0]
+    # Interação bem antes do primeiro pedido do usuário.
+    interactions = [
+        make_interaction(user.id, restaurants[5].id, days_ago=20),
+    ]
+
+    frame = build_training_frame(
+        users, orders, restaurants, interactions=interactions
+    )
+    observed = frame[
+        (frame["_user_id"] == str(user.id)) & (frame["_observed"])
+    ]
+
+    assert not observed.empty
+    assert (observed["_sample_weight"] == 1.0).all()
+
+
+def test_predictive_metrics_include_calibration() -> None:
+    labels = [0, 1] * 15
+    scores = [0.1, 0.9] * 15
+
+    metrics = _predictive_metrics(labels, scores)
+
+    assert metrics["roc_auc"] == 1.0
+    assert metrics["pr_auc"] == 1.0
+    assert metrics["brier_score"] == pytest.approx(0.01, abs=1e-6)
+    assert metrics["log_loss"] is not None and metrics["log_loss"] < 0.2
+
+
+def test_predictive_metrics_are_none_without_two_classes() -> None:
+    metrics = _predictive_metrics([1] * 30, [0.5] * 30)
+
+    assert metrics["roc_auc"] is None
+    assert metrics["pr_auc"] is None
+    assert metrics["brier_score"] is None
+    assert metrics["log_loss"] is None
+
+
+def test_ranking_bootstrap_interval_is_reproducible_by_user() -> None:
+    items_a = [("a", 1.0, 1), ("b", 0.9, 0), ("c", 0.8, 0)]
+    items_b = [("d", 1.0, 1), ("e", 0.9, 0), ("f", 0.8, 0)]
+    contexts = [
+        {"context_id": "1", "user_id": "u1", "items": items_a},
+        {"context_id": "2", "user_id": "u2", "items": items_b},
+    ]
+
+    first = compute_ranking_metrics(contexts, k=2, bootstrap_resamples=200)
+    second = compute_ranking_metrics(contexts, k=2, bootstrap_resamples=200)
+
+    assert first["confidence_intervals"] == second["confidence_intervals"]
+    interval = first["confidence_intervals"]["ndcg_at_k"]
+    assert interval is not None
+    assert interval["unit"] == "user"
+    assert interval["low"] <= interval["high"]
+
+
+def test_ild_and_novelty_are_computed_from_attributes_and_popularity() -> None:
+    contexts = [
+        {
+            "context_id": "1",
+            "user_id": "u1",
+            "items": [("a", 1.0, 1), ("b", 0.9, 0)],
+            "popularity": {"a": 10, "b": 1},
+            "popularity_total": 20,
+        }
+    ]
+    attributes = {"a": {"italiana"}, "b": {"japonesa"}}
+
+    metrics = compute_ranking_metrics(
+        contexts, k=2, item_attributes=attributes
+    )
+
+    # Duas categorias diferentes: Jaccard 0 => distância 1.
+    assert metrics["ild_at_k"] == 1.0
+    assert metrics["novelty_at_k"] is not None
+    assert metrics["novelty_at_k"] > 0
+
+
+def test_promotion_requires_beating_the_production_model() -> None:
+    def metrics_for(ndcg: float, production: dict) -> dict:
+        ranking = {"ndcg_at_k": ndcg, "map_at_k": ndcg, "precision_at_k": ndcg}
+        return {
+            "ranking": ranking,
+            "baselines": {
+                "popularity": {"ndcg_at_k": 0.4, "map_at_k": 0.4},
+                "random": {"ndcg_at_k": 0.1, "map_at_k": 0.1},
+            },
+            "production": production,
+        }
+
+    quality = {
+        "ok": True,
+        "promotion_ready": True,
+        "checks": {},
+        "promotion_checks": {},
+    }
+    previous = {"version": "prod-1", "path": "unused"}
+    better_production = {
+        "available": True,
+        "ranking": {"ndcg_at_k": 0.6, "map_at_k": 0.6},
+    }
+    worse_production = {
+        "available": True,
+        "ranking": {"ndcg_at_k": 0.3, "map_at_k": 0.3},
+    }
+
+    kept = _promotion_decision(
+        metrics_for(0.5, better_production), quality, previous
+    )
+    promoted = _promotion_decision(
+        metrics_for(0.5, worse_production), quality, previous
+    )
+    unavailable = _promotion_decision(
+        metrics_for(0.5, {"available": False, "reason": "sem features"}),
+        quality,
+        previous,
+    )
+
+    assert kept["decision"] == "kept_previous"
+    assert promoted["decision"] == "promoted"
+    assert unavailable["decision"] == "insufficient_evidence"
+
+
+def test_seed_training_never_replaces_existing_production_model(
+    tmp_path, monkeypatch
+) -> None:
+    model_path = tmp_path / "model.joblib"
+    monkeypatch.setattr(recommender_module, "MODEL_PATH", model_path)
+    monkeypatch.setattr(train_module, "save_training_report", lambda report: None)
+    sentinel = b"production-sentinel"
+    model_path.write_bytes(sentinel)
+
+    result = train_from_seed()
+
+    assert result is not None
+    assert result["promotion"]["promoted"] is False
+    assert result["promotion"]["decision"] == "kept_previous"
+    assert "seed" in result["promotion"]["reason"].lower()
+    assert model_path.read_bytes() == sentinel

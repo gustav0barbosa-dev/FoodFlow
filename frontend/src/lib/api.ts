@@ -395,6 +395,23 @@ export interface ApiExperimentGroupMetrics {
   }
   readable: boolean
   conversion_readable: boolean
+  /** Presentes apenas na coorte válida. */
+  users_with_impressions?: number
+  user_ctr?: number
+  user_conversion_rate?: number
+  conversion_per_user?: number
+  user_confidence_intervals?: {
+    ctr: ApiBootstrapInterval | null
+    conversion_rate: ApiBootstrapInterval | null
+    conversion_per_user: ApiBootstrapInterval | null
+  }
+}
+
+export interface ApiBootstrapInterval {
+  low: number
+  high: number
+  resamples: number
+  unit: string
 }
 
 export interface ApiExperimentComparison {
@@ -405,6 +422,13 @@ export interface ApiExperimentComparison {
   relative_lift: number | null
   p_value: number | null
   significant: boolean
+  method?: string
+  confidence_interval?: ApiBootstrapInterval | null
+  user_level?: {
+    candidate_mean: number | null
+    baseline_mean: number | null
+    absolute_difference: number | null
+  }
 }
 
 export interface ApiStatisticalAnalysis {
@@ -413,7 +437,33 @@ export interface ApiStatisticalAnalysis {
   method?: string
   alpha?: number
   corrected_alpha?: number
+  planned_comparisons?: number
+  unit?: string
+  bootstrap_resamples?: number
   comparisons?: ApiExperimentComparison[]
+  notes?: string[]
+}
+
+export interface ApiExperimentSampleSizeEntry {
+  metric: string
+  baseline_rate: number
+  expected_rate: number | null
+  required_users_per_group: number | null
+  required_impressions_per_group: number | null
+  reason: string | null
+}
+
+export interface ApiExperimentPlan {
+  primary_metric: string
+  unit: string
+  alpha: number
+  corrected_alpha: number
+  power: number
+  planned_comparisons: number
+  minimum_detectable_effect_relative: number
+  baseline_impressions_per_user: number
+  plans: ApiExperimentSampleSizeEntry[]
+  note: string
 }
 
 export interface ApiExperimentTimelinePoint {
@@ -442,6 +492,7 @@ export interface ApiExperimentResults {
   message: string
   generated_at: string
   has_data: boolean
+  has_valid_data?: boolean
   experiment_version: string
   unit: string
   minimum_impressions_for_reading: number
@@ -456,14 +507,29 @@ export interface ApiExperimentResults {
   total_impressions: number
   total_clicks: number
   total_purchases: number
+  valid_total_impressions?: number
+  valid_total_clicks?: number
+  valid_total_purchases?: number
   exposed_users: number
+  valid_exposed_users?: number
   unique_users: number
   assignment_counts: Record<string, number>
   untagged_events: number
   demo_events: number
   contaminated_users: number
+  contamination_rate?: number
   contamination_detected: boolean
+  valid_cohort?: {
+    excluded_users: number
+    contamination_rate: number
+    users: number
+    raw_users: number
+    impressions: number
+    raw_impressions: number
+    note: string
+  }
   groups: Record<string, ApiExperimentGroupMetrics>
+  valid_groups?: Record<string, ApiExperimentGroupMetrics>
   comparison: {
     best_ctr: string | null
     best_conversion: string | null
@@ -471,6 +537,7 @@ export interface ApiExperimentResults {
     note: string
   }
   statistical_analysis: ApiStatisticalAnalysis
+  plan?: ApiExperimentPlan
   periods: Record<
     string,
     { first_event_at: string | null; last_event_at: string | null }
@@ -504,6 +571,8 @@ export interface ApiRankingMetrics {
   recall_at_k: number
   ndcg_at_k: number
   map_at_k: number
+  ild_at_k?: number | null
+  novelty_at_k?: number | null
   /** Alias histórico de ``catalog_coverage``. */
   coverage: number
   catalog_coverage: number
@@ -512,6 +581,7 @@ export interface ApiRankingMetrics {
   catalog_size: number
   users_with_recommendations: number
   users: number
+  confidence_intervals?: Record<string, ApiBootstrapInterval | null>
 }
 
 export interface ApiSplitStats {
@@ -520,6 +590,8 @@ export interface ApiSplitStats {
   users: number
   positives: number
   negatives: number
+  observed_negatives?: number
+  unobserved_negatives?: number
   period: { start: string | null; end: string | null }
 }
 
@@ -533,6 +605,9 @@ export interface ApiTrainingMetrics {
   trained_at?: string
   source?: string
   model?: string
+  target?: string
+  label_semantics?: string
+  negative_policy?: string
   dataset?: {
     hash: string
     samples: number
@@ -541,6 +616,8 @@ export interface ApiTrainingMetrics {
     restaurants: number
     positives: number
     negatives: number
+    observed_negatives?: number
+    unobserved_negatives?: number
     relevance_distribution: Record<string, number>
     period: { start: string | null; end: string | null }
     feature_count: number
@@ -567,13 +644,23 @@ export interface ApiTrainingMetrics {
     roc_auc: number | null
     roc_auc_available: boolean
     roc_auc_note: string | null
+    pr_auc?: number | null
+    brier_score?: number | null
+    log_loss?: number | null
     validation_roc_auc: number | null
     test_roc_auc: number | null
     evaluation_split: string
     ranking: ApiRankingMetrics
   }
   baselines?: Record<string, ApiRankingMetrics>
-  comparison?: Record<string, number>
+  production?: {
+    available: boolean
+    reason: string | null
+    model_version: string | null
+    evaluation_split: string | null
+    ranking: ApiRankingMetrics | null
+  }
+  comparison?: Record<string, number | null>
   quality?: {
     ok: boolean
     promotion_ready: boolean

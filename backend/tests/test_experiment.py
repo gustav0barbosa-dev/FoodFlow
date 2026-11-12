@@ -231,3 +231,121 @@ def test_wilson_interval_contains_observed_rate_and_is_bounded() -> None:
     assert interval["low"] <= 0.3 <= interval["high"]
     assert 0.0 <= interval["low"] <= interval["high"] <= 1.0
     assert _wilson_interval(0, 0) is None
+
+
+def _per_user_rows(group: str, rates: list[tuple[int, int, int]]):
+    return [
+        (group, f"user-{group}-{index}", impressions, clicks, purchases)
+        for index, (impressions, clicks, purchases) in enumerate(rates)
+    ]
+
+
+def test_valid_cohort_excludes_contaminated_users_from_inference() -> None:
+    raw_rows = [
+        (EXPERIMENT_BASELINE, "IMPRESSION", 100),
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 100),
+    ]
+    valid_rows = [
+        (EXPERIMENT_BASELINE, "IMPRESSION", 60),
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 60),
+    ]
+
+    summary = summarize_experiment(
+        raw_rows,
+        valid_count_rows=valid_rows,
+        contaminated_users=1,
+        unique_users=10,
+    )
+
+    assert summary["total_impressions"] == 200
+    assert summary["valid_total_impressions"] == 120
+    assert summary["contamination_rate"] == 0.1
+    assert summary["valid_cohort"]["excluded_users"] == 1
+    assert summary["valid_cohort"]["raw_impressions"] == 200
+    assert summary["valid_groups"][EXPERIMENT_BASELINE]["impressions"] == 60
+    assert summary["groups"][EXPERIMENT_BASELINE]["impressions"] == 100
+
+
+def test_inference_uses_bootstrap_by_user_when_user_rows_exist() -> None:
+    rows = [
+        (EXPERIMENT_BASELINE, "IMPRESSION", 30),
+        (EXPERIMENT_BASELINE, "CLICK", 3),
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 30),
+        (EXPERIMENT_PERSONALIZED, "CLICK", 12),
+    ]
+    user_rows = [(EXPERIMENT_BASELINE, 3), (EXPERIMENT_PERSONALIZED, 3)]
+    user_metric_rows = _per_user_rows(
+        EXPERIMENT_BASELINE, [(10, 1, 0), (10, 1, 0), (10, 1, 0)]
+    ) + _per_user_rows(
+        EXPERIMENT_PERSONALIZED, [(10, 4, 1), (10, 4, 1), (10, 4, 1)]
+    )
+
+    summary = summarize_experiment(
+        rows,
+        user_rows,
+        user_metric_rows=user_metric_rows,
+        min_impressions=1,
+        min_users_per_group=1,
+        min_clicks_per_group=1,
+        statistical_min_impressions=1,
+        statistical_min_users_per_group=2,
+        bootstrap_resamples=200,
+    )
+
+    analysis = summary["statistical_analysis"]
+    assert analysis["available"] is True
+    assert analysis["unit"] == "user"
+    comparison = next(
+        item
+        for item in analysis["comparisons"]
+        if item["group"] == EXPERIMENT_PERSONALIZED and item["metric"] == "ctr"
+    )
+    assert comparison["method"] == "bootstrap_by_user"
+    assert comparison["confidence_interval"] is not None
+    assert comparison["user_level"]["candidate_mean"] == 0.4
+    assert comparison["user_level"]["baseline_mean"] == 0.1
+
+
+def test_inference_falls_back_to_z_test_without_user_rows() -> None:
+    rows = [
+        (EXPERIMENT_BASELINE, "IMPRESSION", 100),
+        (EXPERIMENT_BASELINE, "CLICK", 10),
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 100),
+        (EXPERIMENT_PERSONALIZED, "CLICK", 30),
+    ]
+    user_rows = [(EXPERIMENT_BASELINE, 25), (EXPERIMENT_PERSONALIZED, 25)]
+
+    summary = summarize_experiment(rows, user_rows)
+
+    analysis = summary["statistical_analysis"]
+    assert analysis["available"] is True
+    comparison = next(
+        item
+        for item in analysis["comparisons"]
+        if item["group"] == EXPERIMENT_PERSONALIZED and item["metric"] == "ctr"
+    )
+    assert comparison["method"] == "z_test_by_impression_fallback"
+    assert comparison["confidence_interval"] is None
+
+
+def test_sample_size_plan_uses_valid_baseline_rate() -> None:
+    rows = [
+        (EXPERIMENT_BASELINE, "IMPRESSION", 100),
+        (EXPERIMENT_BASELINE, "PURCHASE", 10),
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 100),
+        (EXPERIMENT_PERSONALIZED, "PURCHASE", 20),
+    ]
+    user_rows = [(EXPERIMENT_BASELINE, 25), (EXPERIMENT_PERSONALIZED, 25)]
+
+    summary = summarize_experiment(rows, user_rows)
+
+    plan = summary["plan"]
+    assert plan["unit"] == "user"
+    assert plan["planned_comparisons"] == 2
+    conversion = next(
+        item for item in plan["plans"] if item["metric"] == "conversion_rate"
+    )
+    assert conversion["baseline_rate"] == 0.1
+    assert conversion["required_users_per_group"] is not None
+    assert conversion["required_users_per_group"] > 0
+    assert conversion["required_impressions_per_group"] is not None

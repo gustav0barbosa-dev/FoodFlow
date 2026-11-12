@@ -47,6 +47,11 @@ export function TrainingMetricsPanel() {
     }
   }, [])
 
+  const ndcgInterval =
+    report?.metrics?.ranking.confidence_intervals?.ndcg_at_k ?? null
+  const mapInterval =
+    report?.metrics?.ranking.confidence_intervals?.map_at_k ?? null
+
   return (
     <section className="bg-white rounded-2xl p-4 border border-gray-100">
       <h2 className="font-semibold text-ink mb-1">Qualidade do modelo</h2>
@@ -96,7 +101,20 @@ export function TrainingMetricsPanel() {
               <p className="mt-0.5 text-[10px] text-ink-soft">
                 {report.dataset?.positives ?? 0} positivos ·{' '}
                 {report.dataset?.negatives ?? 0} negativos
+                {report.dataset?.unobserved_negatives != null && (
+                  <>
+                    {' '}
+                    (não observados:{' '}
+                    {report.dataset.unobserved_negatives}, peso reduzido)
+                  </>
+                )}
               </p>
+              {report.label_semantics && (
+                <p className="mt-0.5 text-[10px] text-ink-soft">
+                  Alvo: {report.target ?? 'purchased'} —{' '}
+                  {report.label_semantics}
+                </p>
+              )}
             </div>
           </div>
 
@@ -147,6 +165,8 @@ export function TrainingMetricsPanel() {
                   <th className="py-1 pr-2 font-medium">R@K</th>
                   <th className="py-1 pr-2 font-medium">NDCG@K</th>
                   <th className="py-1 pr-2 font-medium">MAP@K</th>
+                  <th className="py-1 pr-2 font-medium">ILD@K</th>
+                  <th className="py-1 pr-2 font-medium">Novidade@K</th>
                   <th className="py-1 pr-2 font-medium">Cob. catálogo</th>
                   <th className="py-1 font-medium">Cob. usuários</th>
                 </tr>
@@ -167,12 +187,53 @@ export function TrainingMetricsPanel() {
                     {metric(report.metrics?.ranking.map_at_k)}
                   </td>
                   <td className="py-1 pr-2">
+                    {metric(report.metrics?.ranking.ild_at_k)}
+                  </td>
+                  <td className="py-1 pr-2">
+                    {metric(report.metrics?.ranking.novelty_at_k)}
+                  </td>
+                  <td className="py-1 pr-2">
                     {ratio(report.metrics?.ranking.catalog_coverage)}
                   </td>
                   <td className="py-1">
                     {ratio(report.metrics?.ranking.user_coverage)}
                   </td>
                 </tr>
+                {report.production?.available &&
+                  report.production.ranking && (
+                    <tr className="text-ink">
+                      <td className="py-1 pr-2 font-medium">
+                        Produção
+                        {report.production.model_version
+                          ? ` (${report.production.model_version})`
+                          : ''}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.precision_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.recall_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.ndcg_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.map_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.ild_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {metric(report.production.ranking.novelty_at_k)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        {ratio(report.production.ranking.catalog_coverage)}
+                      </td>
+                      <td className="py-1">
+                        {ratio(report.production.ranking.user_coverage)}
+                      </td>
+                    </tr>
+                  )}
                 {Object.entries(report.baselines ?? {}).map(([name, values]) => (
                   <tr key={name} className="text-ink-soft">
                     <td className="py-1 pr-2 capitalize">{name}</td>
@@ -180,6 +241,8 @@ export function TrainingMetricsPanel() {
                     <td className="py-1 pr-2">{metric(values.recall_at_k)}</td>
                     <td className="py-1 pr-2">{metric(values.ndcg_at_k)}</td>
                     <td className="py-1 pr-2">{metric(values.map_at_k)}</td>
+                    <td className="py-1 pr-2">{metric(values.ild_at_k)}</td>
+                    <td className="py-1 pr-2">{metric(values.novelty_at_k)}</td>
                     <td className="py-1 pr-2">
                       {ratio(values.catalog_coverage)}
                     </td>
@@ -192,13 +255,34 @@ export function TrainingMetricsPanel() {
 
           <p className="text-[10px] text-ink-soft">
             ROC AUC ({report.metrics?.evaluation_split ?? 'teste'}):{' '}
-            {metric(report.metrics?.roc_auc)}
+            {metric(report.metrics?.roc_auc)} · PR AUC:{' '}
+            {metric(report.metrics?.pr_auc)} · Brier:{' '}
+            {metric(report.metrics?.brier_score)} · Log Loss:{' '}
+            {metric(report.metrics?.log_loss)}
             {report.metrics?.roc_auc_note
               ? ` — ${report.metrics.roc_auc_note}`
               : ''}{' '}
             · K = {report.metrics?.ranking.k ?? '—'} · fase:{' '}
             {report.phase ?? '—'}
           </p>
+
+          {ndcgInterval && (
+            <p className="text-[10px] text-ink-soft">
+              IC 95% bootstrap por usuário — NDCG@K: {metric(ndcgInterval.low)} –{' '}
+              {metric(ndcgInterval.high)} · MAP@K:{' '}
+              {mapInterval
+                ? `${metric(mapInterval.low)} – ${metric(mapInterval.high)}`
+                : '—'}
+            </p>
+          )}
+
+          {report.production && !report.production.available && (
+            <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              Modelo em produção não comparável no mesmo teste:{' '}
+              {report.production.reason ?? 'motivo não informado'}. A promoção
+              fica bloqueada sem essa comparação.
+            </p>
+          )}
 
           <div className="grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
             <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">

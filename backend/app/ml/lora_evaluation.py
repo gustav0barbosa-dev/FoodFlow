@@ -50,6 +50,7 @@ from app.ml.train import (
     RANDOM_SEED,
     build_seed_entities,
     build_training_frame,
+    feature_columns as training_feature_columns,
     load_training_data,
 )
 from app.models import Order, Restaurant, User
@@ -126,9 +127,10 @@ def _holdout_contexts(
 
 def _fit_lightgbm(frame: pd.DataFrame) -> tuple[LGBMClassifier, list[str]]:
     """Treina o LightGBM no split de treino, com os mesmos hiperparâmetros do serving."""
-    feature_columns = [column for column in frame.columns if column != "clicked"]
+    feature_columns = training_feature_columns(frame)
     X = frame[feature_columns].fillna(0.0).astype(float)
-    y = frame["clicked"].astype(int)
+    y = frame["purchased"].astype(int)
+    weights = frame["_sample_weight"].astype(float)
 
     model = LGBMClassifier(
         n_estimators=200,
@@ -142,7 +144,7 @@ def _fit_lightgbm(frame: pd.DataFrame) -> tuple[LGBMClassifier, list[str]]:
         random_state=RANDOM_SEED,
         verbose=-1,
     )
-    model.fit(X, y)
+    model.fit(X, y, sample_weight=weights)
     return model, feature_columns
 
 
@@ -301,7 +303,7 @@ def evaluate_with_entities(
         raise ValueError("Nenhum contexto (usuário, turno) no holdout.")
 
     frame = build_training_frame(users, train_orders, restaurants)
-    if frame.empty or frame["clicked"].nunique() < 2:
+    if frame.empty or frame["purchased"].nunique() < 2:
         raise ValueError("Split de treino sem positivos e negativos suficientes.")
 
     lightgbm_model, feature_columns = _fit_lightgbm(frame)
@@ -316,10 +318,10 @@ def evaluate_with_entities(
             "contexts": len(contexts),
             "candidates_per_context": len(restaurants),
             "training_rows": int(len(frame)),
-            "training_positives": int(frame["clicked"].sum()),
+            "training_positives": int(frame["purchased"].sum()),
             "negatives_per_positive": round(
-                (len(frame) - int(frame["clicked"].sum()))
-                / max(int(frame["clicked"].sum()), 1),
+                (len(frame) - int(frame["purchased"].sum()))
+                / max(int(frame["purchased"].sum()), 1),
                 2,
             ),
         },

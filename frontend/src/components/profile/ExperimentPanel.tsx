@@ -182,40 +182,55 @@ export function ExperimentPanel({
 
           {results.contamination_detected && (
             <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-800">
-              Contaminação detectada em {results.contaminated_users} usuário(s):
-              o mesmo usuário aparece em mais de um grupo ou há divergência
-              entre o evento e a atribuição persistente. As métricas ficam
-              marcadas como não confiáveis até a correção.
+              Contaminação detectada em {results.contaminated_users} usuário(s)
+              {results.contamination_rate != null
+                ? ` (${percent(results.contamination_rate)} dos usuários)`
+                : ''}
+              . Eles foram <strong>excluídos da coorte válida</strong> usada na
+              leitura e na inferência; as métricas brutas continuam abaixo
+              apenas para auditoria.
             </p>
           )}
 
           <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
             <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">
-              <p className="text-ink-soft">Impressões oficiais</p>
+              <p className="text-ink-soft">Impressões brutas</p>
               <p className="text-ink font-semibold">
                 {results.total_impressions}
               </p>
             </div>
             <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">
-              <p className="text-ink-soft">Usuários únicos</p>
-              <p className="text-ink font-semibold">{results.unique_users}</p>
+              <p className="text-ink-soft">Impressões válidas</p>
+              <p className="text-ink font-semibold">
+                {results.valid_total_impressions ?? results.total_impressions}
+              </p>
+            </div>
+            <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">
+              <p className="text-ink-soft">Usuários válidos</p>
+              <p className="text-ink font-semibold">
+                {results.valid_exposed_users ?? results.exposed_users}
+              </p>
             </div>
             <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">
               <p className="text-ink-soft">Eventos demo (excluídos)</p>
               <p className="text-ink font-semibold">{results.demo_events}</p>
             </div>
-            <div className="bg-surface-muted rounded-xl p-2 border border-gray-100">
-              <p className="text-ink-soft">Versão</p>
-              <p className="text-ink font-semibold break-all">
-                {results.experiment_version}
-              </p>
-            </div>
           </div>
+
+          <p className="text-[10px] text-ink-soft">
+            Versão do experimento: {results.experiment_version} · unidade
+            experimental: {results.unit}
+          </p>
 
           <div className="grid gap-2 sm:grid-cols-3">
             {GROUP_ORDER.map((key) => {
-              const metrics = results.groups[key]
+              const metrics =
+                (results.valid_groups ?? results.groups)[key] ??
+                results.groups[key]
               if (!metrics) return null
+              const userCtr = metrics.user_confidence_intervals?.ctr
+              const userConversion =
+                metrics.user_confidence_intervals?.conversion_rate
               return (
                 <div
                   key={key}
@@ -236,15 +251,21 @@ export function ExperimentPanel({
                       <dd className="text-ink font-medium">{metrics.users}</dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt>CTR</dt>
+                      <dt>CTR por impressão</dt>
                       <dd className="text-ink font-medium">
                         {percent(metrics.ctr)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt>IC 95% CTR</dt>
+                      <dt>CTR médio por usuário</dt>
                       <dd className="text-ink font-medium">
-                        {interval(metrics.confidence_intervals?.ctr)}
+                        {percent(metrics.user_ctr)}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt>IC bootstrap CTR</dt>
+                      <dd className="text-ink font-medium">
+                        {interval(userCtr)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
@@ -254,15 +275,21 @@ export function ExperimentPanel({
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt>Conversão</dt>
+                      <dt>Conversão por impressão</dt>
                       <dd className="text-ink font-medium">
                         {percent(metrics.conversion_rate)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt>IC 95% conversão</dt>
+                      <dt>Conversão por usuário</dt>
                       <dd className="text-ink font-medium">
-                        {interval(metrics.confidence_intervals?.conversion_rate)}
+                        {percent(metrics.conversion_per_user)}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt>IC bootstrap conversão</dt>
+                      <dd className="text-ink font-medium">
+                        {interval(userConversion)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
@@ -282,6 +309,12 @@ export function ExperimentPanel({
             })}
           </div>
 
+          <p className="text-[10px] text-ink-soft">
+            Os cartões usam a coorte válida. CTR e conversão por impressão são
+            descritivos; a inferência usa a média por usuário e o bootstrap
+            agrupado.
+          </p>
+
           <div className="rounded-xl border border-gray-100 p-3">
             <h3 className="text-xs font-semibold text-ink mb-1">
               Comparação estatística
@@ -295,6 +328,15 @@ export function ExperimentPanel({
               <>
                 <p className="text-[11px] text-ink-soft mb-2">
                   {results.statistical_analysis.method}
+                  {results.statistical_analysis.corrected_alpha != null && (
+                    <>
+                      {' '}
+                      α corrigido:{' '}
+                      {results.statistical_analysis.corrected_alpha.toFixed(4)}{' '}
+                      ({results.statistical_analysis.planned_comparisons ?? 0}{' '}
+                      comparações planejadas).
+                    </>
+                  )}
                 </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px]">
@@ -304,7 +346,9 @@ export function ExperimentPanel({
                         <th className="py-1 pr-2 font-medium">Grupo</th>
                         <th className="py-1 pr-2 font-medium">Diferença</th>
                         <th className="py-1 pr-2 font-medium">Lift</th>
+                        <th className="py-1 pr-2 font-medium">IC 95% diferença</th>
                         <th className="py-1 pr-2 font-medium">p-valor</th>
+                        <th className="py-1 pr-2 font-medium">Método</th>
                         <th className="py-1 font-medium">Significante</th>
                       </tr>
                     </thead>
@@ -326,7 +370,18 @@ export function ExperimentPanel({
                                 : percent(item.relative_lift)}
                             </td>
                             <td className="py-1 pr-2">
+                              {interval(item.confidence_interval)}
+                            </td>
+                            <td className="py-1 pr-2">
                               {pValue(item.p_value)}
+                            </td>
+                            <td className="py-1 pr-2">
+                              {item.method === 'bootstrap_by_user'
+                                ? 'bootstrap/usuário'
+                                : item.method ===
+                                    'z_test_by_impression_fallback'
+                                  ? 'z/impressão (fallback)'
+                                  : (item.method ?? '—')}
                             </td>
                             <td className="py-1">
                               {item.significant ? 'Sim' : 'Não'}
@@ -345,6 +400,63 @@ export function ExperimentPanel({
                 : results.comparison.note}
             </p>
           </div>
+
+          {results.plan && (
+            <div className="rounded-xl border border-gray-100 p-3">
+              <h3 className="text-xs font-semibold text-ink mb-1">
+                Dimensionamento da amostra
+              </h3>
+              <p className="text-[11px] text-ink-soft mb-2">
+                {results.plan.note} Poder desejado:{' '}
+                {percent(results.plan.power)} · efeito mínimo:{' '}
+                {percent(results.plan.minimum_detectable_effect_relative)} ·{' '}
+                {results.plan.planned_comparisons} comparações planejadas.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead>
+                    <tr className="text-ink-soft">
+                      <th className="py-1 pr-2 font-medium">Métrica</th>
+                      <th className="py-1 pr-2 font-medium">Baseline</th>
+                      <th className="py-1 pr-2 font-medium">Esperado</th>
+                      <th className="py-1 pr-2 font-medium">Usuários/grupo</th>
+                      <th className="py-1 font-medium">Impressões/grupo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-ink">
+                    {results.plan.plans.map((entry) => (
+                      <tr
+                        key={entry.metric}
+                        className="border-t border-gray-100"
+                      >
+                        <td className="py-1 pr-2">{entry.metric}</td>
+                        <td className="py-1 pr-2">
+                          {percent(entry.baseline_rate)}
+                        </td>
+                        <td className="py-1 pr-2">
+                          {percent(entry.expected_rate)}
+                        </td>
+                        <td className="py-1 pr-2">
+                          {entry.required_users_per_group ?? '—'}
+                        </td>
+                        <td className="py-1">
+                          {entry.required_impressions_per_group ?? '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {results.plan.plans.some((entry) => entry.reason) && (
+                <p className="mt-2 text-[10px] text-amber-700">
+                  {results.plan.plans
+                    .filter((entry) => entry.reason)
+                    .map((entry) => `${entry.metric}: ${entry.reason}`)
+                    .join(' ')}
+                </p>
+              )}
+            </div>
+          )}
 
           {results.timeline.length > 0 && (
             <div className="rounded-xl border border-gray-100 p-3">

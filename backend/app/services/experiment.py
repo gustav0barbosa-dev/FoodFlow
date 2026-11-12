@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import hashlib
 import math
+import random
 from datetime import datetime, timezone
+from statistics import NormalDist
 from typing import Any, Iterable, Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +52,12 @@ EXPERIMENT_MODES: tuple[str, ...] = (
 
 # Mantido por compatibilidade com imports existentes.
 MIN_IMPRESSIONS_FOR_READING = settings.experiment_min_impressions
+
+# Reamostragens do bootstrap agrupado por usuário.
+BOOTSTRAP_RESAMPLES = 1000
+# Efeito relativo mínimo usado no dimensionamento ilustrativo da amostra.
+DEFAULT_MINIMUM_DETECTABLE_EFFECT = 0.20
+DEFAULT_POWER = 0.80
 
 _GROUP_LABELS = {
     EXPERIMENT_BASELINE: "Baseline (popularidade)",
@@ -226,6 +234,141 @@ def _two_proportion_p_value(
     return round(2 * (1 - _normal_cdf(abs(z_score))), 6)
 
 
+def _percentile(values: Sequence[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[int(position)]
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _bootstrap_interval(
+    values: Sequence[float],
+    *,
+    resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: str = "interval",
+) -> dict[str, float] | None:
+    """IC 95% da média por reamostragem (unidade já agregada por usuário)."""
+    if len(values) < 2 or resamples <= 0:
+        return None
+    rng = random.Random(seed)
+    means = [
+        sum(rng.choice(values) for _ in values) / len(values)
+        for _ in range(resamples)
+    ]
+    return {
+        "low": round(_percentile(means, 0.025), 4),
+        "high": round(_percentile(means, 0.975), 4),
+        "resamples": resamples,
+        "unit": "user",
+    }
+
+
+def _bootstrap_difference(
+    candidate: Sequence[float],
+    baseline: Sequence[float],
+    *,
+    resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: str = "difference",
+) -> dict[str, Any]:
+    """Teste bootstrap agrupado por usuário para a diferença de médias.
+
+    Cada grupo é reamostrado com reposição **por usuário**, preservando a
+    dependência entre impressões do mesmo usuário. O p-valor é bilateral e
+    aproximado pela distribuição bootstrap da diferença.
+    """
+    if len(candidate) < 2 or len(baseline) < 2 or resamples <= 0:
+        return {"p_value": None, "confidence_interval": None}
+    rng = random.Random(seed)
+    differences: list[float] = []
+    for _ in range(resamples):
+        candidate_mean = sum(rng.choice(candidate) for _ in candidate) / len(
+            candidate
+        )
+        baseline_mean = sum(rng.choice(baseline) for _ in baseline) / len(baseline)
+        differences.append(candidate_mean - baseline_mean)
+    below = sum(1 for value in differences if value <= 0.0) / len(differences)
+    above = sum(1 for value in differences if value >= 0.0) / len(differences)
+    p_value = round(min(1.0, 2 * min(below, above)), 6)
+    return {
+        "p_value": p_value,
+        "confidence_interval": {
+            "low": round(_percentile(differences, 0.025), 4),
+            "high": round(_percentile(differences, 0.975), 4),
+        },
+    }
+
+
+def required_sample_size(
+    baseline_rate: float,
+    expected_rate: float,
+    *,
+    alpha: float = 0.05,
+    power: float = DEFAULT_POWER,
+) -> int | None:
+    """Aproximação de tamanho de amostra por grupo (duas proporções).
+
+    ``n ≈ 2 (z_{1-alpha/2} + z_{power})² p̄ (1-p̄) / (p1-p0)²``.
+    É uma aproximação para proporções independentes; com unidade usuário e
+    múltiplas comparações, o número deve ser tratado como piso, não garantia.
+    """
+    if not (0.0 < baseline_rate < 1.0) or not (0.0 < expected_rate < 1.0):
+        return None
+    difference = abs(expected_rate - baseline_rate)
+    if difference <= 0.0:
+        return None
+    average = (baseline_rate + expected_rate) / 2
+    normal = NormalDist()
+    z_alpha = normal.inv_cdf(1 - alpha / 2)
+    z_power = normal.inv_cdf(power)
+    size = (
+        2
+        * (z_alpha + z_power) ** 2
+        * average
+        * (1 - average)
+        / (difference**2)
+    )
+    return max(1, math.ceil(size))
+
+
+def _user_metric_values(
+    user_metric_rows: Iterable[Sequence[Any]],
+) -> dict[str, dict[str, list[float]]]:
+    """Agrega métricas por usuário para inferência agrupada.
+
+    ``user_metric_rows`` = ``(grupo, user_id, impressões, cliques, compras)``.
+    Usuários sem impressão são ignorados nas taxas (não têm denominador).
+    """
+    result: dict[str, dict[str, list[float]]] = {
+        group: {
+            "ctr": [],
+            "conversion_rate": [],
+            "conversion_per_user": [],
+            "users": [],
+        }
+        for group in EXPERIMENT_GROUPS
+    }
+    for row in user_metric_rows:
+        group = row[0]
+        if group not in result:
+            continue
+        impressions = int(row[2] or 0)
+        clicks = int(row[3] or 0)
+        purchases = int(row[4] or 0)
+        if impressions <= 0:
+            continue
+        result[group]["users"].append(1.0)
+        result[group]["ctr"].append(clicks / impressions)
+        result[group]["conversion_rate"].append(purchases / impressions)
+        result[group]["conversion_per_user"].append(1.0 if purchases > 0 else 0.0)
+    return result
+
+
 def _build_timeline(
     timeline_rows: Iterable[Sequence[Any]],
 ) -> list[dict[str, Any]]:
@@ -264,6 +407,190 @@ def _build_timeline(
     return timeline
 
 
+def _aggregate_valid_groups(
+    count_rows: Iterable[Sequence[Any]],
+    user_rows: Iterable[Sequence[Any]],
+    user_metric_rows: Iterable[Sequence[Any]],
+    *,
+    diversity_rows: Iterable[Sequence[Any]] = (),
+    total_catalog_restaurants: int,
+    min_impressions: int,
+    min_users_per_group: int,
+    min_clicks_per_group: int,
+    bootstrap_resamples: int,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, list[float]]]]:
+    """Métricas da coorte válida (usuários sem contaminação).
+
+    As taxas por impressão continuam descritivas. A inferência usa as médias
+    por usuário e o bootstrap agrupado.
+    """
+    groups = {group: _empty_group() for group in EXPERIMENT_GROUPS}
+    for row in count_rows:
+        group, event_type, count = row[0], row[1], int(row[2] or 0)
+        if group not in groups:
+            continue
+        key = _EVENT_KEYS.get(str(event_type).upper())
+        if key is not None:
+            groups[group][key] += count
+    for row in user_rows:
+        group, count = row[0], int(row[1] or 0)
+        if group in groups:
+            groups[group]["users"] = count
+
+    user_values = _user_metric_values(user_metric_rows)
+    distinct_restaurants: dict[str, int] = {}
+    for row in diversity_rows:
+        group, count = row[0], int(row[1] or 0)
+        if group in groups:
+            distinct_restaurants[group] = count
+    for group, values in groups.items():
+        impressions = values["impressions"]
+        values["distinct_restaurants"] = distinct_restaurants.get(group, 0)
+        values["ctr"] = _ratio(values["clicks"], impressions)
+        values["conversion_rate"] = _ratio(values["purchases"], impressions)
+        values["detail_rate"] = _ratio(values["view_details"], impressions)
+        values["favorite_rate"] = _ratio(values["favorites"], impressions)
+        values["dismiss_rate"] = _ratio(values["dismissals"], impressions)
+        values["detail_per_click"] = _ratio(
+            values["view_details"], values["clicks"]
+        )
+        values["impressions_per_user"] = _ratio(impressions, values["users"])
+        values["clicks_per_user"] = _ratio(values["clicks"], values["users"])
+        values["purchases_per_user"] = _ratio(
+            values["purchases"], values["users"]
+        )
+        values["confidence_intervals"] = {
+            "ctr": _wilson_interval(values["clicks"], impressions),
+            "detail_rate": _wilson_interval(values["view_details"], impressions),
+            "conversion_rate": _wilson_interval(
+                values["purchases"], impressions
+            ),
+        }
+        values["readable"] = (
+            impressions >= min_impressions
+            and values["users"] >= min_users_per_group
+            and values["clicks"] >= min_clicks_per_group
+        )
+
+        metrics = user_values[group]
+        values["users_with_impressions"] = len(metrics["ctr"])
+        values["user_ctr"] = (
+            round(sum(metrics["ctr"]) / len(metrics["ctr"]), 4)
+            if metrics["ctr"]
+            else 0.0
+        )
+        values["user_conversion_rate"] = (
+            round(
+                sum(metrics["conversion_rate"])
+                / len(metrics["conversion_rate"]),
+                4,
+            )
+            if metrics["conversion_rate"]
+            else 0.0
+        )
+        values["conversion_per_user"] = (
+            round(
+                sum(metrics["conversion_per_user"])
+                / len(metrics["conversion_per_user"]),
+                4,
+            )
+            if metrics["conversion_per_user"]
+            else 0.0
+        )
+        values["user_confidence_intervals"] = {
+            "ctr": _bootstrap_interval(
+                metrics["ctr"],
+                resamples=bootstrap_resamples,
+                seed=f"ctr:{group}",
+            ),
+            "conversion_rate": _bootstrap_interval(
+                metrics["conversion_rate"],
+                resamples=bootstrap_resamples,
+                seed=f"conversion:{group}",
+            ),
+            "conversion_per_user": _bootstrap_interval(
+                metrics["conversion_per_user"],
+                resamples=bootstrap_resamples,
+                seed=f"conversion_user:{group}",
+            ),
+        }
+        values["catalog_diversity"] = (
+            _ratio(values["distinct_restaurants"], total_catalog_restaurants)
+            if total_catalog_restaurants
+            else 0.0
+        )
+        values["label"] = _GROUP_LABELS[group]
+    return groups, user_values
+
+
+def _sample_size_plan(
+    groups: dict[str, dict[str, Any]],
+    user_values: dict[str, dict[str, list[float]]],
+    *,
+    alpha: float,
+    planned_comparisons: int,
+    power: float = DEFAULT_POWER,
+    minimum_detectable_effect: float = DEFAULT_MINIMUM_DETECTABLE_EFFECT,
+) -> dict[str, Any]:
+    """Dimensionamento ilustrativo por grupo, com correção de comparações.
+
+    Usa a taxa do baseline da coorte válida e um efeito relativo mínimo. É um
+    piso aproximado (duas proporções independentes), não uma garantia de poder:
+    a unidade real é o usuário e a variância agrupada pode ser maior.
+    """
+    del user_values  # mantido na assinatura para evolução futura
+    corrected_alpha = alpha / max(planned_comparisons, 1)
+    baseline = groups[EXPERIMENT_BASELINE]
+    impressions_per_user = float(baseline.get("impressions_per_user") or 0.0)
+    plans: list[dict[str, Any]] = []
+    for metric in ("conversion_rate", "ctr"):
+        baseline_rate = float(baseline.get(metric) or 0.0)
+        entry: dict[str, Any] = {
+            "metric": metric,
+            "baseline_rate": round(baseline_rate, 4),
+            "expected_rate": None,
+            "required_users_per_group": None,
+            "required_impressions_per_group": None,
+            "reason": None,
+        }
+        if not (0.0 < baseline_rate < 1.0):
+            entry["reason"] = (
+                "Taxa do baseline ausente ou em 0/1 na coorte válida; não é "
+                "possível dimensionar sem uma taxa de referência observada."
+            )
+            plans.append(entry)
+            continue
+        expected_rate = min(
+            baseline_rate * (1 + minimum_detectable_effect), 0.999
+        )
+        entry["expected_rate"] = round(expected_rate, 4)
+        required_users = required_sample_size(
+            baseline_rate, expected_rate, alpha=corrected_alpha, power=power
+        )
+        entry["required_users_per_group"] = required_users
+        if required_users is not None and impressions_per_user > 0:
+            entry["required_impressions_per_group"] = math.ceil(
+                required_users * impressions_per_user
+            )
+        plans.append(entry)
+    return {
+        "primary_metric": "conversion_rate",
+        "unit": "user",
+        "alpha": alpha,
+        "corrected_alpha": round(corrected_alpha, 6),
+        "power": power,
+        "planned_comparisons": planned_comparisons,
+        "minimum_detectable_effect_relative": minimum_detectable_effect,
+        "baseline_impressions_per_user": round(impressions_per_user, 4),
+        "plans": plans,
+        "note": (
+            "Aproximação para duas proporções independentes, com alpha "
+            "corrigido por Bonferroni. Trate o resultado como piso: a unidade "
+            "real é o usuário e a variância agrupada pode ser maior."
+        ),
+    }
+
+
 def summarize_experiment(
     count_rows: Iterable[Sequence[Any]],
     user_rows: Iterable[Sequence[Any]] = (),
@@ -284,12 +611,45 @@ def summarize_experiment(
     statistical_min_impressions: int | None = None,
     statistical_min_users_per_group: int | None = None,
     alpha: float | None = None,
+    valid_count_rows: Iterable[Sequence[Any]] | None = None,
+    valid_user_rows: Iterable[Sequence[Any]] | None = None,
+    valid_diversity_rows: Iterable[Sequence[Any]] | None = None,
+    user_metric_rows: Iterable[Sequence[Any]] = (),
+    bootstrap_resamples: int = BOOTSTRAP_RESAMPLES,
 ) -> dict[str, Any]:
     """Agrega eventos oficiais em métricas por estratégia.
 
     ``count_rows`` deve conter apenas eventos com ``experiment_mode='experiment'``.
     Eventos de demonstração entram em ``demo_events`` e nunca no denominador.
+
+    Há duas visões deliberadamente separadas:
+
+    - ``groups``: todos os eventos oficiais, para auditoria;
+    - ``valid_groups``: apenas usuários sem contaminação, usada para leitura e
+      inferência.
+
+    Quando ``valid_count_rows``/``valid_user_rows`` não são fornecidos, a
+    coorte válida coincide com a bruta (compatibilidade com chamadas antigas).
     """
+    # Materializa uma vez: os mesmos iteráveis alimentam as visões bruta e
+    # válida, e um gerador só pode ser consumido uma vez.
+    count_rows = list(count_rows)
+    user_rows = list(user_rows)
+    model_rows = list(model_rows)
+    timeline_rows = list(timeline_rows)
+    diversity_rows = list(diversity_rows)
+    user_metric_rows = list(user_metric_rows)
+    valid_count_rows = (
+        count_rows if valid_count_rows is None else list(valid_count_rows)
+    )
+    valid_user_rows = (
+        user_rows if valid_user_rows is None else list(valid_user_rows)
+    )
+    valid_diversity_rows = (
+        diversity_rows
+        if valid_diversity_rows is None
+        else list(valid_diversity_rows)
+    )
     min_impressions = (
         settings.experiment_min_impressions
         if min_impressions is None
@@ -409,57 +769,109 @@ def summarize_experiment(
             and values["purchases"] >= min_purchases_per_group
         )
 
+    valid_groups, user_values = _aggregate_valid_groups(
+        valid_count_rows,
+        valid_user_rows,
+        user_metric_rows,
+        diversity_rows=valid_diversity_rows,
+        total_catalog_restaurants=total_catalog_restaurants,
+        min_impressions=min_impressions,
+        min_users_per_group=min_users_per_group,
+        min_clicks_per_group=min_clicks_per_group,
+        bootstrap_resamples=bootstrap_resamples,
+    )
+
     total_impressions = sum(values["impressions"] for values in groups.values())
     total_purchases = sum(values["purchases"] for values in groups.values())
     total_clicks = sum(values["clicks"] for values in groups.values())
     exposed_users = sum(values["users"] for values in groups.values())
-    groups_with_impressions = [
-        group for group, values in groups.items() if values["impressions"] > 0
+
+    valid_total_impressions = sum(
+        values["impressions"] for values in valid_groups.values()
+    )
+    valid_total_clicks = sum(
+        values["clicks"] for values in valid_groups.values()
+    )
+    valid_total_purchases = sum(
+        values["purchases"] for values in valid_groups.values()
+    )
+    valid_exposed_users = sum(
+        values["users"] for values in valid_groups.values()
+    )
+    valid_groups_with_impressions = [
+        group
+        for group, values in valid_groups.items()
+        if values["impressions"] > 0
     ]
 
+    resolved_unique_users = (
+        unique_users if unique_users is not None else exposed_users
+    )
+    contamination_rate = (
+        round(contaminated_users / resolved_unique_users, 4)
+        if resolved_unique_users
+        else 0.0
+    )
+
     statistical_ready = (
-        total_impressions >= statistical_min_impressions
-        and len(groups_with_impressions) >= 2
+        valid_total_impressions >= statistical_min_impressions
+        and len(valid_groups_with_impressions) >= 2
         and all(
-            groups[group]["impressions"] >= min_impressions
-            and groups[group]["users"] >= statistical_min_users_per_group
-            for group in groups_with_impressions
+            valid_groups[group]["impressions"] >= min_impressions
+            and valid_groups[group]["users"] >= statistical_min_users_per_group
+            for group in valid_groups_with_impressions
         )
     )
     descriptive_ready = (
-        total_impressions >= min_impressions
-        and len(groups_with_impressions) >= 2
-        and all(groups[group]["readable"] for group in groups_with_impressions)
+        valid_total_impressions >= min_impressions
+        and len(valid_groups_with_impressions) >= 2
+        and all(
+            valid_groups[group]["readable"]
+            for group in valid_groups_with_impressions
+        )
     )
 
-    if total_impressions == 0:
+    contamination_note = (
+        f" {contaminated_users} usuário(s) contaminado(s) foram excluídos da "
+        f"coorte válida ({contamination_rate:.1%} dos usuários)."
+        if contaminated_users
+        else ""
+    )
+
+    if valid_total_impressions == 0:
         phase = "collecting"
         message = (
-            "Ainda não há impressões oficiais registradas. Abra a Home com o "
-            "backend disponível e mantenha o modo experimental (não o modo de "
+            "Ainda não há impressões oficiais na coorte válida. Abra a Home com "
+            "o backend disponível e mantenha o modo experimental (não o modo de "
             "demonstração) para contabilizar as recomendações exibidas."
+            + contamination_note
         )
     elif not descriptive_ready:
         phase = "insufficient_data"
         message = (
-            f"Há {total_impressions} impressões oficiais. O mínimo descritivo "
-            f"configurado é {min_impressions} impressões, {min_users_per_group} "
-            f"usuários e {min_clicks_per_group} cliques por grupo. Os números "
-            "abaixo são descritivos e não permitem conclusão."
+            f"A coorte válida tem {valid_total_impressions} impressões "
+            f"oficiais. O mínimo descritivo configurado é {min_impressions} "
+            f"impressões, {min_users_per_group} usuários e "
+            f"{min_clicks_per_group} cliques por grupo. Os números abaixo são "
+            "descritivos e não permitem conclusão."
+            + contamination_note
         )
     elif not statistical_ready:
         phase = "ready"
         message = (
-            "Volume mínimo para leitura descritiva atingido. Isso não é "
-            "significância estatística; a análise inferencial ainda não foi "
-            "liberada."
+            "Volume mínimo para leitura descritiva atingido na coorte válida. "
+            "Isso não é significância estatística; a análise inferencial ainda "
+            "não foi liberada."
+            + contamination_note
         )
     else:
         phase = "statistical_analysis"
         message = (
-            "Volume mínimo para análise estatística atingido. Os testes são "
-            "aplicados com correção para múltiplas comparações; significância "
-            "não é declarada apenas por diferença percentual."
+            "Volume mínimo para análise estatística atingido na coorte válida. "
+            "Os testes usam bootstrap agrupado por usuário e correção para "
+            "múltiplas comparações; significância não é declarada apenas por "
+            "diferença percentual."
+            + contamination_note
         )
 
     comparison: dict[str, Any] = {
@@ -467,56 +879,85 @@ def summarize_experiment(
         "best_conversion": None,
         "winner_declared": False,
         "note": (
-            "Comparação descritiva. Nenhuma estratégia é declarada vencedora "
-            "sem teste estatístico válido."
+            "Comparação descritiva sobre a coorte válida. Nenhuma estratégia é "
+            "declarada vencedora sem teste estatístico válido."
         ),
     }
-    if descriptive_ready and groups_with_impressions:
+    if descriptive_ready and valid_groups_with_impressions:
         comparison["best_ctr"] = max(
-            groups_with_impressions, key=lambda group: groups[group]["ctr"]
+            valid_groups_with_impressions,
+            key=lambda group: valid_groups[group]["ctr"],
         )
         comparison["best_conversion"] = max(
-            groups_with_impressions,
-            key=lambda group: groups[group]["conversion_rate"],
+            valid_groups_with_impressions,
+            key=lambda group: valid_groups[group]["conversion_rate"],
         )
 
+    planned_comparisons = 2 * max(len(valid_groups_with_impressions) - 1, 1)
+    corrected_alpha = alpha / planned_comparisons
     statistical_analysis: dict[str, Any] = {
         "available": False,
         "reason": (
-            "Amostra insuficiente para inferência. "
+            "Amostra insuficiente para inferência na coorte válida. "
             f"Requer ao menos {statistical_min_impressions} impressões totais "
             f"e {statistical_min_users_per_group} usuários por grupo."
         ),
+        "planned_comparisons": planned_comparisons,
+        "alpha": alpha,
+        "corrected_alpha": round(corrected_alpha, 6),
+        "unit": "user",
     }
     if statistical_ready:
         comparisons: list[dict[str, Any]] = []
-        # Comparações planejadas: 2 métricas x (grupos - baseline). A correção
-        # de Bonferroni usa o número total de comparações, não apenas duas.
-        comparisons_planned = 2 * max(len(groups_with_impressions) - 1, 1)
-        corrected_alpha = alpha / comparisons_planned
-        for metric, successes_key, total_key in (
-            ("ctr", "clicks", "impressions"),
-            ("conversion_rate", "purchases", "impressions"),
+        for metric, successes_key in (
+            ("ctr", "clicks"),
+            ("conversion_rate", "purchases"),
         ):
-            baseline = groups[EXPERIMENT_BASELINE]
+            baseline = valid_groups[EXPERIMENT_BASELINE]
+            baseline_values = user_values[EXPERIMENT_BASELINE][metric]
             for group in (EXPERIMENT_PERSONALIZED, EXPERIMENT_DISTANCE):
-                candidate = groups[group]
-                if candidate[total_key] <= 0 or baseline[total_key] <= 0:
+                candidate = valid_groups[group]
+                if (
+                    candidate["impressions"] <= 0
+                    or baseline["impressions"] <= 0
+                ):
                     continue
-                p_value = _two_proportion_p_value(
-                    candidate[successes_key],
-                    candidate[total_key],
-                    baseline[successes_key],
-                    baseline[total_key],
+                candidate_values = user_values[group][metric]
+                bootstrap = _bootstrap_difference(
+                    candidate_values,
+                    baseline_values,
+                    resamples=bootstrap_resamples,
+                    seed=f"{metric}:{group}",
                 )
+                p_value = bootstrap["p_value"]
+                method = "bootstrap_by_user"
+                if p_value is None:
+                    # Menos de dois usuários válidos por grupo: o bootstrap não
+                    # é identificável. O teste por impressão é apenas fallback
+                    # e herda a limitação de tratar impressões como
+                    # independentes.
+                    p_value = _two_proportion_p_value(
+                        candidate[successes_key],
+                        candidate["impressions"],
+                        baseline[successes_key],
+                        baseline["impressions"],
+                    )
+                    method = "z_test_by_impression_fallback"
                 absolute = round(candidate[metric] - baseline[metric], 4)
                 relative = (
                     round(absolute / baseline[metric], 4)
                     if baseline[metric]
                     else None
                 )
-                significant = (
-                    p_value is not None and p_value < corrected_alpha
+                candidate_mean = (
+                    round(sum(candidate_values) / len(candidate_values), 4)
+                    if candidate_values
+                    else None
+                )
+                baseline_mean = (
+                    round(sum(baseline_values) / len(baseline_values), 4)
+                    if baseline_values
+                    else None
                 )
                 comparisons.append(
                     {
@@ -525,25 +966,56 @@ def summarize_experiment(
                         "baseline": EXPERIMENT_BASELINE,
                         "absolute_difference": absolute,
                         "relative_lift": relative,
+                        "user_level": {
+                            "candidate_mean": candidate_mean,
+                            "baseline_mean": baseline_mean,
+                            "absolute_difference": (
+                                round(candidate_mean - baseline_mean, 4)
+                                if candidate_mean is not None
+                                and baseline_mean is not None
+                                else None
+                            ),
+                        },
                         "p_value": p_value,
-                        "significant": significant,
+                        "confidence_interval": bootstrap["confidence_interval"],
+                        "method": method,
+                        "significant": (
+                            p_value is not None and p_value < corrected_alpha
+                        ),
                     }
                 )
         statistical_analysis = {
             "available": True,
             "method": (
-                "Intervalo de Wilson (95%) para taxas e teste z bilateral de "
-                "duas proporções contra o baseline, com correção de Bonferroni "
-                f"(alpha={alpha}, alpha_corrigido={corrected_alpha})."
+                "Bootstrap agrupado por usuário (IC 95% da diferença de "
+                "médias por usuário) com p-valor bilateral e correção de "
+                "Bonferroni. Quando há menos de dois usuários válidos por "
+                "grupo, usa-se teste z por impressão como fallback explícito."
             ),
             "alpha": alpha,
-            "corrected_alpha": corrected_alpha,
+            "corrected_alpha": round(corrected_alpha, 6),
+            "planned_comparisons": planned_comparisons,
+            "unit": "user",
+            "bootstrap_resamples": bootstrap_resamples,
             "comparisons": comparisons,
+            "notes": [
+                "CTR e conversão por impressão continuam descritivos; a "
+                "inferência principal usa a média por usuário.",
+                "O p-valor bootstrap é aproximado e não substitui um desenho "
+                "amostral com poder previamente calculado.",
+            ],
         }
         comparison["winner_declared"] = any(
             item["significant"] and item["absolute_difference"] > 0
             for item in comparisons
         )
+
+    plan = _sample_size_plan(
+        valid_groups,
+        user_values,
+        alpha=alpha,
+        planned_comparisons=planned_comparisons,
+    )
 
     return {
         "source": "database",
@@ -551,6 +1023,7 @@ def summarize_experiment(
         "message": message,
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "has_data": total_impressions > 0,
+        "has_valid_data": valid_total_impressions > 0,
         "experiment_version": settings.experiment_version,
         "unit": "user",
         "minimum_impressions_for_reading": min_impressions,
@@ -562,24 +1035,49 @@ def summarize_experiment(
             "statistical_min_impressions": statistical_min_impressions,
             "statistical_min_users_per_group": statistical_min_users_per_group,
         },
+        # Totais brutos (todos os eventos oficiais), para auditoria.
         "total_impressions": total_impressions,
         "total_clicks": total_clicks,
         "total_purchases": total_purchases,
+        # Totais da coorte válida, usados na leitura e na inferência.
+        "valid_total_impressions": valid_total_impressions,
+        "valid_total_clicks": valid_total_clicks,
+        "valid_total_purchases": valid_total_purchases,
         # ``exposed_users`` soma usuários por grupo (pode contar a mesma pessoa
         # duas vezes se houver contaminação); ``unique_users`` é a contagem
         # distinta real quando o chamador a fornece.
         "exposed_users": exposed_users,
-        "unique_users": unique_users
-        if unique_users is not None
-        else max((values["users"] for values in groups.values()), default=0),
+        "valid_exposed_users": valid_exposed_users,
+        "unique_users": (
+            unique_users
+            if unique_users is not None
+            else max(
+                (values["users"] for values in groups.values()), default=0
+            )
+        ),
         "assignment_counts": assignment_counts or {},
         "untagged_events": untagged_events,
         "demo_events": demo_events,
         "contaminated_users": contaminated_users,
+        "contamination_rate": contamination_rate,
         "contamination_detected": contaminated_users > 0,
+        "valid_cohort": {
+            "excluded_users": contaminated_users,
+            "contamination_rate": contamination_rate,
+            "users": valid_exposed_users,
+            "raw_users": exposed_users,
+            "impressions": valid_total_impressions,
+            "raw_impressions": total_impressions,
+            "note": (
+                "Métricas brutas incluem todos os eventos oficiais; a coorte "
+                "válida exclui usuários contaminados e é a base da inferência."
+            ),
+        },
         "groups": groups,
+        "valid_groups": valid_groups,
         "comparison": comparison,
         "statistical_analysis": statistical_analysis,
+        "plan": plan,
         "periods": periods,
         "timeline": _build_timeline(timeline_rows),
         "coverage_definition": (
@@ -720,7 +1218,87 @@ async def get_experiment_metrics(session: AsyncSession) -> dict[str, Any]:
         .scalars()
         .all()
     )
-    contaminated_users = len(event_contamination | assignment_mismatch)
+    contaminated = event_contamination | assignment_mismatch
+    contaminated_users = len(contaminated)
+
+    # Coorte válida: mesmos eventos oficiais, sem usuários contaminados. A
+    # visão bruta continua no relatório para auditoria.
+    valid_conditions = [
+        interaction.experiment_mode == EXPERIMENT_MODE_EXPERIMENT,
+        interaction.experiment_group.is_not(None),
+    ]
+    if contaminated:
+        valid_conditions.append(interaction.user_id.notin_(contaminated))
+
+    valid_count_rows = (
+        await session.execute(
+            select(
+                interaction.experiment_group,
+                interaction.interaction_type,
+                func.count(interaction.id),
+                func.min(interaction.created_at),
+                func.max(interaction.created_at),
+            )
+            .where(*valid_conditions)
+            .group_by(interaction.experiment_group, interaction.interaction_type)
+        )
+    ).all()
+
+    valid_user_rows = (
+        await session.execute(
+            select(
+                interaction.experiment_group,
+                func.count(func.distinct(interaction.user_id)),
+            )
+            .where(
+                *valid_conditions,
+                interaction.interaction_type == "IMPRESSION",
+            )
+            .group_by(interaction.experiment_group)
+        )
+    ).all()
+
+    valid_diversity_rows = (
+        await session.execute(
+            select(
+                interaction.experiment_group,
+                func.count(func.distinct(interaction.restaurant_id)),
+            )
+            .where(
+                *valid_conditions,
+                interaction.interaction_type == "IMPRESSION",
+            )
+            .group_by(interaction.experiment_group)
+        )
+    ).all()
+
+    # Métricas por usuário para bootstrap agrupado. A unidade é o usuário:
+    # reamostrar impressões individuais subestimaria a variância.
+    user_metric_rows = (
+        await session.execute(
+            select(
+                interaction.experiment_group,
+                interaction.user_id,
+                func.sum(
+                    case(
+                        (interaction.interaction_type == "IMPRESSION", 1),
+                        else_=0,
+                    )
+                ),
+                func.sum(
+                    case((interaction.interaction_type == "CLICK", 1), else_=0)
+                ),
+                func.sum(
+                    case(
+                        (interaction.interaction_type == "PURCHASE", 1),
+                        else_=0,
+                    )
+                ),
+            )
+            .where(*valid_conditions)
+            .group_by(interaction.experiment_group, interaction.user_id)
+        )
+    ).all()
 
     timeline_rows = (
         await session.execute(
@@ -770,6 +1348,10 @@ async def get_experiment_metrics(session: AsyncSession) -> dict[str, Any]:
         contaminated_users=contaminated_users,
         timeline_rows=timeline_rows,
         diversity_rows=diversity_rows,
+        valid_count_rows=valid_count_rows,
+        valid_user_rows=valid_user_rows,
+        valid_diversity_rows=valid_diversity_rows,
+        user_metric_rows=user_metric_rows,
         total_catalog_restaurants=total_catalog_restaurants,
         unique_users=unique_users,
         assignment_counts=assignment_counts,

@@ -10,8 +10,15 @@ O pipeline é deliberadamente explícito:
 - as métricas de ranking são calculadas **por contexto** e agregadas por
   macro-média, incluindo contextos sem item relevante (valor 0);
 - LightGBM, popularidade e aleatório recebem exatamente os mesmos candidatos;
+- o alvo é **compra observada** (``purchased``), não clique. O nome antigo
+  ``clicked`` foi substituído para não sugerir um objetivo que o rótulo não
+  representa;
+- negativos **observados** (o usuário teve contato com o restaurante antes do
+  contexto) recebem peso maior que negativos **não observados**; ausência de
+  pedido não é tratada como rejeição com o mesmo peso;
 - o relatório registra hash do dataset, períodos, contagens, baselines,
-  limitações e a decisão de promoção/rollback.
+  intervalos por usuário, métricas preditivas, comparação com o modelo em
+  produção, limitações e a decisão de promoção/rollback.
 
 Nenhuma etapa pesada é executada dentro de endpoints HTTP.
 """
@@ -27,12 +34,18 @@ import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any, Iterable, Sequence
 
 import joblib
 import pandas as pd
 from lightgbm import LGBMClassifier, early_stopping
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    log_loss,
+    roc_auc_score,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +74,29 @@ MIN_ROC_AUC_POSITIVES = 5
 MIN_ROC_AUC_NEGATIVES = 5
 # Evidência mínima para promover um candidato sobre o modelo em produção.
 MIN_PROMOTION_TEST_CONTEXTS = 2
+# Margem mínima de melhoria e tolerância de degradação ao comparar modelos.
+MIN_PROMOTION_IMPROVEMENT = 0.01
+MAX_PROMOTION_DEGRADATION = 0.01
+# Peso de um negativo sem exposição observada. Ausência de pedido não é
+# rejeição: o usuário pode nunca ter visto o restaurante.
+UNOBSERVED_NEGATIVE_WEIGHT = 0.1
+# Reamostragens do bootstrap por usuário (métricas offline).
+BOOTSTRAP_RESAMPLES = 1000
+
+# Semântica explícita do alvo: o rótulo positivo é uma compra observada.
+TARGET_COLUMN = "purchased"
+LABEL_SEMANTICS = (
+    "O alvo positivo é uma compra/pedido observado no contexto "
+    "(relevância binária). O modelo NÃO é um estimador de clique; para "
+    "interesse/clique seria necessário um alvo e uma janela de atribuição "
+    "próprios."
+)
+NEGATIVE_POLICY = (
+    "Negativos observados (restaurante com interação registrada antes do "
+    "contexto) recebem peso 1.0; negativos não observados recebem peso "
+    f"{UNOBSERVED_NEGATIVE_WEIGHT}. O peso só é usado no treino; as métricas "
+    "de ranking continuam usando o rótulo binário e o catálogo inteiro."
+)
 
 MODEL_PARAMS: dict[str, Any] = {
     "n_estimators": 200,
@@ -77,7 +113,9 @@ MODEL_PARAMS: dict[str, Any] = {
 
 # Colunas de contexto usadas para agrupar/splitar, nunca como features.
 METADATA_COLUMNS: set[str] = {
-    "clicked",
+    "purchased",
+    "_observed",
+    "_sample_weight",
     "_user_id",
     "_restaurant_id",
     "_turno",
@@ -102,18 +140,20 @@ def _period(frame: pd.DataFrame) -> dict[str, str | None]:
 
 
 def _dataset_hash(frame: pd.DataFrame) -> str:
-    """Hash canônico do dataset (contexto, candidato, rótulo e instante)."""
+    """Hash canônico do dataset (contexto, candidato, rótulo, exposição e instante)."""
     rows = sorted(
         (
             str(context_id),
             str(restaurant_id),
-            int(clicked),
+            int(purchased),
+            int(observed),
             _as_utc(event_time).isoformat(),
         )
-        for context_id, restaurant_id, clicked, event_time in zip(
+        for context_id, restaurant_id, purchased, observed, event_time in zip(
             frame["_context_id"],
             frame["_restaurant_id"],
-            frame["clicked"],
+            frame["purchased"],
+            frame["_observed"],
             frame["_event_time"],
             strict=True,
         )
@@ -193,6 +233,13 @@ def build_contexts(
                     "until": until,
                     "turno": turno,
                     "relevant": relevant,
+                    # Restaurantes com algum contato registrado antes do
+                    # contexto. Serve para distinguir negativo observado de
+                    # negativo sem exposição (ver NEGATIVE_POLICY).
+                    "observed": {
+                        str(interaction.restaurant_id)
+                        for interaction in history_interactions
+                    },
                     "user_features": user_features,
                     # Todos os candidatos do catálogo, iguais para as três
                     # estratégias. A ausência de pedido é tratada como
@@ -215,6 +262,10 @@ def build_training_frame(
 ) -> pd.DataFrame:
     """Gera uma linha por (contexto, candidato) com o rótulo observado.
 
+    O alvo ``purchased`` é 1 quando houve pedido naquele contexto. Negativos
+    recebem ``_sample_weight`` diferente conforme tenham ou não exposição
+    observada: ausência de compra não é rejeição.
+
     ``negatives_per_positive`` e ``seed`` são mantidos por compatibilidade de
     assinatura; a avaliação usa o catálogo inteiro como candidatos para que
     todas as estratégias recebam exatamente o mesmo conjunto.
@@ -224,16 +275,21 @@ def build_training_frame(
     rows: list[dict[str, Any]] = []
     for context in contexts:
         for restaurant in context["candidates"]:
+            restaurant_id = str(restaurant.id)
+            purchased = 1 if restaurant_id in context["relevant"] else 0
+            observed = restaurant_id in context.get("observed", set())
             row = build_candidate_features(
                 context["user_features"], restaurant, context["turno"]
             )
             row.update(
                 {
-                    "clicked": 1
-                    if str(restaurant.id) in context["relevant"]
-                    else 0,
+                    "purchased": purchased,
+                    "_observed": bool(observed),
+                    "_sample_weight": 1.0
+                    if purchased or observed
+                    else UNOBSERVED_NEGATIVE_WEIGHT,
                     "_user_id": context["user_id"],
-                    "_restaurant_id": str(restaurant.id),
+                    "_restaurant_id": restaurant_id,
                     "_turno": context["turno"],
                     "_context_id": context["context_id"],
                     "_event_time": context["until"],
@@ -245,13 +301,22 @@ def build_training_frame(
 
 def _split_stats(frame: pd.DataFrame, mask: pd.Series) -> dict[str, Any]:
     subset = frame.loc[mask]
-    positives = int(subset["clicked"].sum()) if len(subset) else 0
+    positives = int(subset["purchased"].sum()) if len(subset) else 0
+    negative_mask = subset["purchased"] == 0
+    observed_negatives = (
+        int((negative_mask & subset["_observed"]).sum()) if len(subset) else 0
+    )
+    unobserved_negatives = (
+        int((negative_mask & ~subset["_observed"]).sum()) if len(subset) else 0
+    )
     return {
         "samples": int(len(subset)),
         "contexts": int(subset["_context_id"].nunique()) if len(subset) else 0,
         "users": int(subset["_user_id"].nunique()) if len(subset) else 0,
         "positives": positives,
         "negatives": int(len(subset) - positives),
+        "observed_negatives": observed_negatives,
+        "unobserved_negatives": unobserved_negatives,
         "period": _period(subset),
     }
 
@@ -270,6 +335,8 @@ def _split_frame(frame: pd.DataFrame) -> dict[str, Any]:
                     "users": 0,
                     "positives": 0,
                     "negatives": 0,
+                    "observed_negatives": 0,
+                    "unobserved_negatives": 0,
                     "period": {"start": None, "end": None},
                 }
                 for name in ("train", "validation", "test")
@@ -322,12 +389,74 @@ def _split_frame(frame: pd.DataFrame) -> dict[str, Any]:
     return {"strategy": strategy, "masks": masks, "stats": stats, "boundaries": boundaries}
 
 
+def _percentile(values: Sequence[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[int(position)]
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _bootstrap_by_user(
+    per_context: Sequence[dict[str, Any]],
+    metric_key: str,
+    resamples: int,
+    seed: int,
+) -> dict[str, float] | None:
+    """IC 95% por reamostragem de **usuários** com reposição.
+
+    Reamostrar linhas individuais quebraria a dependência entre contextos do
+    mesmo usuário; por isso o usuário inteiro é a unidade de reamostragem.
+    """
+    by_user: dict[str, list[float]] = defaultdict(list)
+    for item in per_context:
+        by_user[str(item["user_id"])].append(float(item[metric_key]))
+    users = sorted(by_user)
+    if len(users) < 2 or resamples <= 0:
+        return None
+
+    rng = random.Random(f"{seed}:{metric_key}")
+    means: list[float] = []
+    for _ in range(resamples):
+        sampled = [rng.choice(users) for _ in users]
+        values = [value for user in sampled for value in by_user[user]]
+        if values:
+            means.append(sum(values) / len(values))
+    if not means:
+        return None
+    return {
+        "low": round(_percentile(means, 0.025), 4),
+        "high": round(_percentile(means, 0.975), 4),
+        "resamples": resamples,
+        "unit": "user",
+    }
+
+
+def _jaccard_distance(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 0.0
+    union = left | right
+    if not union:
+        return 0.0
+    return 1.0 - len(left & right) / len(union)
+
+
 def compute_ranking_metrics(
     contexts: Sequence[dict[str, Any]],
     k: int = RANKING_K,
     *,
     catalog_size: int | None = None,
     user_count: int | None = None,
+    item_attributes: dict[str, set[str]] | None = None,
+    popularity_counts: dict[str, int] | None = None,
+    popularity_total: int | None = None,
+    bootstrap_resamples: int = BOOTSTRAP_RESAMPLES,
+    bootstrap_seed: int = RANDOM_SEED,
 ) -> dict[str, Any]:
     """Métricas de ranking por contexto, agregadas por macro-média.
 
@@ -342,18 +471,31 @@ def compute_ranking_metrics(
       possível recuperar K itens quando o contexto tem menos de K candidatos;
     - empates de score são desempatados pelo id do restaurante, de forma
       determinística;
-    - ``catalog_coverage`` e ``user_coverage`` são reportadas separadamente.
+    - ``catalog_coverage`` e ``user_coverage`` são reportadas separadamente;
+    - ``ild_at_k`` (diversidade intra-lista) só é calculada quando
+      ``item_attributes`` é fornecido; usa distância de Jaccard entre
+      categorias/cozinhas dos itens do Top K;
+    - ``novelty_at_k`` usa ``-log2(pop(r) / N)`` com piso de 1 para evitar
+      ``log(0)``; é ``None`` sem contagens de popularidade;
+    - os intervalos de confiança são bootstrap por **usuário**, não por linha.
     """
     precision_values: list[float] = []
     recall_values: list[float] = []
     ndcg_values: list[float] = []
     map_values: list[float] = []
+    ild_values: list[float] = []
+    novelty_values: list[float] = []
+    per_context: list[dict[str, Any]] = []
     recommended: set[str] = set()
     users_with_recommendations: set[str] = set()
     candidate_ids: set[str] = set()
     contexts_without_candidates = 0
     contexts_without_relevance = 0
     total_relevant = 0
+
+    resolved_popularity_total = popularity_total
+    if resolved_popularity_total is None and popularity_counts:
+        resolved_popularity_total = sum(popularity_counts.values())
 
     for context in contexts:
         items = list(context.get("items") or [])
@@ -373,8 +515,10 @@ def compute_ranking_metrics(
         hits = sum(1 for _, _, gain in top if float(gain) > 0)
         total_relevant += relevant
 
-        precision_values.append(hits / min(k, n_candidates))
-        recall_values.append(hits / relevant if relevant else 0.0)
+        precision = hits / min(k, n_candidates)
+        recall = hits / relevant if relevant else 0.0
+        precision_values.append(precision)
+        recall_values.append(recall)
 
         dcg = sum(
             float(gain) / math.log2(rank + 2)
@@ -387,7 +531,8 @@ def compute_ranking_metrics(
             for rank, gain in enumerate(ideal_gains)
             if gain > 0
         )
-        ndcg_values.append(dcg / idcg if idcg else 0.0)
+        ndcg = dcg / idcg if idcg else 0.0
+        ndcg_values.append(ndcg)
 
         average_precision = 0.0
         hit_count = 0
@@ -395,9 +540,47 @@ def compute_ranking_metrics(
             if float(gain) > 0:
                 hit_count += 1
                 average_precision += hit_count / rank
-        map_values.append(
+        average_precision = (
             average_precision / min(relevant, k) if relevant else 0.0
         )
+        map_values.append(average_precision)
+
+        per_context.append(
+            {
+                "context_id": str(context.get("context_id", "")),
+                "user_id": str(context.get("user_id", "")),
+                "precision_at_k": precision,
+                "recall_at_k": recall,
+                "ndcg_at_k": ndcg,
+                "map_at_k": average_precision,
+            }
+        )
+
+        if item_attributes is not None and len(top) >= 2:
+            top_ids = [str(item[0]) for item in top]
+            pairs = 0
+            distance_sum = 0.0
+            for index, left_id in enumerate(top_ids):
+                left = item_attributes.get(left_id, set())
+                for right_id in top_ids[index + 1 :]:
+                    right = item_attributes.get(right_id, set())
+                    distance_sum += _jaccard_distance(left, right)
+                    pairs += 1
+            if pairs:
+                ild_values.append(distance_sum / pairs)
+
+        context_popularity = context.get("popularity", popularity_counts)
+        context_total = context.get("popularity_total", resolved_popularity_total)
+        if context_popularity is not None and context_total:
+            total = max(int(context_total), 1)
+            novelty = [
+                -math.log2(
+                    max(int(context_popularity.get(str(item[0]), 0)), 1) / total
+                )
+                for item in top
+            ]
+            if novelty:
+                novelty_values.append(sum(novelty) / len(novelty))
 
         recommended.update(str(item[0]) for item in top)
         candidate_ids.update(str(item[0]) for item in ordered)
@@ -419,6 +602,18 @@ def compute_ranking_metrics(
         else 0.0
     )
 
+    confidence_intervals = {
+        metric: _bootstrap_by_user(
+            per_context, metric, bootstrap_resamples, bootstrap_seed
+        )
+        for metric in (
+            "precision_at_k",
+            "recall_at_k",
+            "ndcg_at_k",
+            "map_at_k",
+        )
+    }
+
     return {
         "k": k,
         "contexts": len(precision_values),
@@ -430,6 +625,8 @@ def compute_ranking_metrics(
         "recall_at_k": mean(recall_values),
         "ndcg_at_k": mean(ndcg_values),
         "map_at_k": mean(map_values),
+        "ild_at_k": mean(ild_values) if ild_values else None,
+        "novelty_at_k": mean(novelty_values) if novelty_values else None,
         "catalog_coverage": catalog_coverage,
         "user_coverage": user_coverage,
         # Compatibilidade com o contrato anterior do painel.
@@ -438,6 +635,7 @@ def compute_ranking_metrics(
         "catalog_size": resolved_catalog,
         "users_with_recommendations": len(users_with_recommendations),
         "users": resolved_users,
+        "confidence_intervals": confidence_intervals,
     }
 
 
@@ -481,7 +679,7 @@ def _strategy_contexts(
 ) -> dict[str, list[dict[str, Any]]]:
     """Monta os mesmos contextos/candidatos para as três estratégias."""
     working = frame[
-        ["_context_id", "_user_id", "_restaurant_id", "clicked"]
+        ["_context_id", "_user_id", "_restaurant_id", "purchased"]
     ].copy()
     working["_model_score"] = list(model_scores)
     popularity = _popularity_by_context(frame, orders)
@@ -499,7 +697,7 @@ def _strategy_contexts(
         random_items: list[tuple[str, float, int]] = []
         for restaurant_id, relevance, score in zip(
             group["_restaurant_id"],
-            group["clicked"],
+            group["purchased"],
             group["_model_score"],
             strict=True,
         ):
@@ -513,7 +711,12 @@ def _strategy_contexts(
                 (restaurant_id, _random_score(context_key, restaurant_id), relevance)
             )
 
-        base = {"context_id": context_key, "user_id": user_id}
+        base = {
+            "context_id": context_key,
+            "user_id": user_id,
+            "popularity": popularity_scores,
+            "popularity_total": sum(popularity_scores.values()),
+        }
         model_contexts.append({**base, "items": model_items})
         popularity_contexts.append({**base, "items": popularity_items})
         random_contexts.append({**base, "items": random_items})
@@ -532,12 +735,28 @@ def _ranking_metrics(
     *,
     orders: list[Order] | None = None,
     catalog_size: int | None = None,
+    item_attributes: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
     """Compatibilidade: métricas de ranking de uma única estratégia."""
     contexts = _strategy_contexts(frame, scores, orders)["model"]
     return compute_ranking_metrics(
-        contexts, k, catalog_size=catalog_size
+        contexts, k, catalog_size=catalog_size, item_attributes=item_attributes
     )
+
+
+def _item_attributes(restaurants: Sequence[Restaurant]) -> dict[str, set[str]]:
+    """Atributos usados na diversidade intra-lista (categorias + cozinha)."""
+    attributes: dict[str, set[str]] = {}
+    for restaurant in restaurants:
+        values = {
+            str(value).strip().lower()
+            for value in (restaurant.categories or [])
+            if str(value).strip()
+        }
+        if restaurant.cuisine:
+            values.add(str(restaurant.cuisine).strip().lower())
+        attributes[str(restaurant.id)] = values
+    return attributes
 
 
 def _popularity_baseline(frame: pd.DataFrame) -> list[float]:
@@ -586,10 +805,63 @@ def _roc_auc(
         return None, f"ROC AUC indisponível: {exc}"
 
 
+def _predictive_metrics(
+    labels: Sequence[int], scores: Sequence[float]
+) -> dict[str, Any]:
+    """ROC AUC, PR AUC, Brier e Log Loss sob a mesma regra de disponibilidade.
+
+    O Brier mede calibração (erro quadrático das probabilidades) e o Log Loss
+    penaliza confiança errada. Nenhum deles substitui as métricas de ranking.
+    """
+    y = [int(value) for value in labels]
+    probabilities = [float(value) for value in scores]
+    roc_auc, note = _roc_auc(y, probabilities)
+    result: dict[str, Any] = {
+        "roc_auc": roc_auc,
+        "roc_auc_available": roc_auc is not None,
+        "roc_auc_note": note,
+        "pr_auc": None,
+        "brier_score": None,
+        "log_loss": None,
+    }
+    if roc_auc is None:
+        return result
+    try:
+        result["pr_auc"] = round(
+            float(average_precision_score(y, probabilities)), 4
+        )
+        result["brier_score"] = round(
+            float(brier_score_loss(y, probabilities)), 4
+        )
+        clipped = [min(max(value, 1e-6), 1 - 1e-6) for value in probabilities]
+        result["log_loss"] = round(float(log_loss(y, clipped, labels=[0, 1])), 4)
+    except ValueError as exc:  # pragma: no cover - proteção defensiva
+        result["roc_auc_note"] = f"Métricas preditivas indisponíveis: {exc}"
+    return result
+
+
+def _evaluation_selection(
+    frame: pd.DataFrame,
+) -> tuple[dict[str, Any], pd.Series, str]:
+    """Split temporal e máscara usada para avaliar o modelo.
+
+    Teste é preferido; sem teste, validação; sem ambos, o dataset inteiro (com
+    a limitação registrada no relatório).
+    """
+    split = _split_frame(frame)
+    masks = split["masks"]
+    if masks["test"].any():
+        return split, masks["test"], "test"
+    if masks["validation"].any():
+        return split, masks["validation"], "validation"
+    return split, pd.Series(True, index=frame.index), "all"
+
+
 def _fit_and_evaluate(
     frame: pd.DataFrame,
     orders: list[Order] | None = None,
     catalog_size: int | None = None,
+    restaurants: Sequence[Restaurant] | None = None,
 ) -> tuple[LGBMClassifier, dict[str, Any]]:
     if frame.empty:
         raise InsufficientTrainingDataError("Dataset de treino vazio.")
@@ -599,12 +871,13 @@ def _fit_and_evaluate(
         raise InsufficientTrainingDataError("Nenhuma feature disponível.")
 
     X = frame[columns].fillna(0.0).astype(float)
-    y = frame["clicked"].astype(int)
-    split = _split_frame(frame)
+    y = frame["purchased"].astype(int)
+    split, evaluation_mask, evaluation_name = _evaluation_selection(frame)
     masks = split["masks"]
 
     X_train = X.loc[masks["train"]]
     y_train = y.loc[masks["train"]]
+    train_weights = frame.loc[masks["train"], "_sample_weight"].astype(float)
     X_validation = X.loc[masks["validation"]]
     y_validation = y.loc[masks["validation"]]
     X_test = X.loc[masks["test"]]
@@ -622,22 +895,14 @@ def _fit_and_evaluate(
         model.fit(
             X_train,
             y_train,
+            sample_weight=train_weights,
             eval_set=[(X_validation, y_validation)],
             callbacks=[early_stopping(30, verbose=False)],
         )
     else:
-        model.fit(X_train, y_train)
+        model.fit(X_train, y_train, sample_weight=train_weights)
 
-    if masks["test"].any():
-        evaluation_frame = frame.loc[masks["test"]]
-        evaluation_name = "test"
-    elif masks["validation"].any():
-        evaluation_frame = frame.loc[masks["validation"]]
-        evaluation_name = "validation"
-    else:
-        evaluation_frame = frame
-        evaluation_name = "all"
-
+    evaluation_frame = frame.loc[evaluation_mask]
     if len(evaluation_frame):
         model_scores = model.predict_proba(
             evaluation_frame[columns].fillna(0.0).astype(float)
@@ -647,12 +912,17 @@ def _fit_and_evaluate(
 
     resolved_catalog_size = catalog_size or int(frame["_restaurant_id"].nunique())
     strategies = _strategy_contexts(evaluation_frame, model_scores, orders)
+    attributes = _item_attributes(restaurants) if restaurants else None
     model_ranking = compute_ranking_metrics(
-        strategies["model"], catalog_size=resolved_catalog_size
+        strategies["model"],
+        catalog_size=resolved_catalog_size,
+        item_attributes=attributes,
     )
     baselines = {
         name: compute_ranking_metrics(
-            strategies[name], catalog_size=resolved_catalog_size
+            strategies[name],
+            catalog_size=resolved_catalog_size,
+            item_attributes=attributes,
         )
         for name in ("popularity", "random")
     }
@@ -665,17 +935,27 @@ def _fit_and_evaluate(
         if len(X_validation)
         else []
     )
-    test_auc, test_auc_note = _roc_auc(y_test.tolist(), test_scores)
-    validation_auc, _ = _roc_auc(y_validation.tolist(), validation_scores)
+    test_predictive = _predictive_metrics(y_test.tolist(), test_scores)
+    validation_predictive = _predictive_metrics(
+        y_validation.tolist(), validation_scores
+    )
 
     metrics = {
         "samples": int(len(frame)),
         "positives": int(y.sum()),
         "negatives": int(len(frame) - y.sum()),
+        "observed_negatives": int(
+            ((frame["purchased"] == 0) & frame["_observed"]).sum()
+        ),
+        "unobserved_negatives": int(
+            ((frame["purchased"] == 0) & ~frame["_observed"]).sum()
+        ),
         "features": len(columns),
         "feature_names": columns,
         "params": MODEL_PARAMS,
         "seed": RANDOM_SEED,
+        "label_semantics": LABEL_SEMANTICS,
+        "negative_policy": NEGATIVE_POLICY,
         "split": {
             "strategy": split["strategy"],
             "boundaries": split["boundaries"],
@@ -691,11 +971,14 @@ def _fit_and_evaluate(
             },
         },
         "evaluation_split": evaluation_name,
-        "roc_auc": test_auc,
-        "roc_auc_available": test_auc is not None,
-        "roc_auc_note": test_auc_note,
-        "validation_roc_auc": validation_auc,
-        "test_roc_auc": test_auc,
+        "roc_auc": test_predictive["roc_auc"],
+        "roc_auc_available": test_predictive["roc_auc_available"],
+        "roc_auc_note": test_predictive["roc_auc_note"],
+        "pr_auc": test_predictive["pr_auc"],
+        "brier_score": test_predictive["brier_score"],
+        "log_loss": test_predictive["log_loss"],
+        "validation_roc_auc": validation_predictive["roc_auc"],
+        "test_roc_auc": test_predictive["roc_auc"],
         "ranking": model_ranking,
         "baselines": baselines,
         "comparison": {
@@ -773,8 +1056,11 @@ def _quality_assessment(
         )
     limitations.append(
         "Negativos implícitos: restaurantes não pedidos no contexto são "
-        "tratados como não relevantes; ausência de pedido não é rejeição."
+        "tratados como não relevantes; ausência de pedido não é rejeição. "
+        f"No treino, negativos não observados recebem peso "
+        f"{UNOBSERVED_NEGATIVE_WEIGHT}."
     )
+    limitations.append(LABEL_SEMANTICS)
     limitations.append(
         "As métricas de ranking são macro-médias por contexto; contextos sem "
         "item relevante entram como 0."
@@ -782,6 +1068,13 @@ def _quality_assessment(
     if not metrics["roc_auc_available"]:
         limitations.append(
             "ROC AUC não reportada: " + str(metrics["roc_auc_note"])
+        )
+    production = metrics.get("production") or {}
+    if not production.get("available"):
+        limitations.append(
+            "Modelo em produção não comparável no mesmo teste: "
+            + str(production.get("reason") or "motivo não informado")
+            + ". Sem essa comparação, a promoção fica bloqueada."
         )
     return {
         "ok": all(checks.values()),
@@ -816,6 +1109,85 @@ def _previous_model() -> dict[str, Any] | None:
     return {"version": None, "path": str(model_path)}
 
 
+def _evaluate_previous_model(
+    previous: dict[str, Any] | None,
+    frame: pd.DataFrame,
+    orders: list[Order] | None = None,
+    catalog_size: int | None = None,
+    restaurants: Sequence[Restaurant] | None = None,
+) -> dict[str, Any]:
+    """Avalia o modelo em produção nos **mesmos** contextos/candidatos do teste.
+
+    Sem essa comparação, o candidato poderia ser promovido por superar a
+    popularidade mesmo sendo pior que o modelo que já está servindo.
+    """
+    result: dict[str, Any] = {
+        "available": False,
+        "reason": None,
+        "model_version": previous.get("version") if previous else None,
+        "evaluation_split": None,
+        "ranking": None,
+    }
+    if previous is None:
+        result["reason"] = "Não havia modelo em produção para comparar."
+        return result
+
+    path = Path(str(previous.get("path")))
+    try:
+        bundle = joblib.load(path)
+    except Exception as exc:  # artefato ilegível não impede o treino
+        result["reason"] = f"Modelo em produção ilegível: {exc}"
+        return result
+    if not isinstance(bundle, dict):
+        result["reason"] = "Formato do modelo em produção não reconhecido."
+        return result
+
+    model = bundle.get("model")
+    previous_features = list(bundle.get("feature_names") or [])
+    if model is None or not previous_features:
+        result["reason"] = "Modelo em produção sem modelo/features utilizáveis."
+        return result
+
+    missing = [name for name in previous_features if name not in frame.columns]
+    if missing:
+        result["reason"] = (
+            "Features do modelo em produção ausentes no dataset atual: "
+            + ", ".join(missing[:5])
+        )
+        return result
+
+    _, mask, evaluation_name = _evaluation_selection(frame)
+    evaluation_frame = frame.loc[mask]
+    if evaluation_frame.empty:
+        result["reason"] = "Sem contextos de avaliação para comparar."
+        return result
+
+    try:
+        scores = model.predict_proba(
+            evaluation_frame[previous_features].fillna(0.0).astype(float)
+        )[:, 1].tolist()
+    except Exception as exc:  # pragma: no cover - proteção defensiva
+        result["reason"] = f"Falha ao pontuar o modelo em produção: {exc}"
+        return result
+
+    contexts = _strategy_contexts(evaluation_frame, scores, orders)["model"]
+    result.update(
+        {
+            "available": True,
+            "evaluation_split": evaluation_name,
+            "ranking": compute_ranking_metrics(
+                contexts,
+                catalog_size=catalog_size
+                or int(frame["_restaurant_id"].nunique()),
+                item_attributes=_item_attributes(restaurants)
+                if restaurants
+                else None,
+            ),
+        }
+    )
+    return result
+
+
 def _promotion_decision(
     metrics: dict[str, Any],
     quality: dict[str, Any],
@@ -823,12 +1195,20 @@ def _promotion_decision(
 ) -> dict[str, Any]:
     model_ranking = metrics["ranking"]
     baselines = metrics["baselines"]
+    production = metrics.get("production") or {}
+    production_ranking = (
+        production.get("ranking") if production.get("available") else None
+    )
+
     best_ndcg = max(
         baselines["popularity"]["ndcg_at_k"], baselines["random"]["ndcg_at_k"]
     )
     best_map = max(
         baselines["popularity"]["map_at_k"], baselines["random"]["map_at_k"]
     )
+    if production_ranking:
+        best_ndcg = max(best_ndcg, production_ranking["ndcg_at_k"])
+        best_map = max(best_map, production_ranking["map_at_k"])
     model_ndcg = model_ranking["ndcg_at_k"]
     model_map = model_ranking["map_at_k"]
 
@@ -853,26 +1233,41 @@ def _promotion_decision(
             "promoted": True,
             "reason": "Não havia modelo em produção; o candidato foi promovido.",
         }
+    if production_ranking is None:
+        return {
+            "decision": "insufficient_evidence",
+            "promoted": False,
+            "reason": (
+                "O modelo em produção não pôde ser avaliado nos mesmos "
+                "contextos/candidatos: "
+                + str(production.get("reason") or "motivo desconhecido")
+            ),
+        }
 
-    improved = model_ndcg > best_ndcg + 1e-9 or model_map > best_map + 1e-9
+    improved = (
+        model_ndcg >= best_ndcg + MIN_PROMOTION_IMPROVEMENT
+        or model_map >= best_map + MIN_PROMOTION_IMPROVEMENT
+    )
     degraded = (
-        model_ndcg + 0.01 < best_ndcg or model_map + 0.01 < best_map
+        model_ndcg < best_ndcg - MAX_PROMOTION_DEGRADATION
+        or model_map < best_map - MAX_PROMOTION_DEGRADATION
     )
     if improved and not degraded:
         return {
             "decision": "promoted",
             "promoted": True,
             "reason": (
-                "O candidato superou o melhor baseline em NDCG@K ou MAP@K "
-                "sem degradação relevante na outra métrica."
+                "O candidato superou o melhor baseline e o modelo em produção "
+                f"em NDCG@K ou MAP@K (margem mínima "
+                f"{MIN_PROMOTION_IMPROVEMENT}) sem degradação relevante."
             ),
         }
     return {
         "decision": "kept_previous",
         "promoted": False,
         "reason": (
-            "O candidato não superou o melhor baseline de forma consistente; "
-            "o modelo anterior foi preservado para rollback."
+            "O candidato não superou o melhor baseline/modelo em produção de "
+            "forma consistente; o modelo anterior foi preservado para rollback."
         ),
     }
 
@@ -889,14 +1284,17 @@ def _build_report(
 ) -> dict[str, Any]:
     relevance_distribution = {
         str(label): int(count)
-        for label, count in frame["clicked"].value_counts().sort_index().items()
+        for label, count in frame["purchased"].value_counts().sort_index().items()
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "model_version": model_version,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "model": "LightGBM",
+        "target": TARGET_COLUMN,
+        "label_semantics": metrics["label_semantics"],
+        "negative_policy": metrics["negative_policy"],
         "dataset": {
             "hash": dataset_hash,
             "samples": metrics["samples"],
@@ -905,6 +1303,8 @@ def _build_report(
             "restaurants": int(frame["_restaurant_id"].nunique()),
             "positives": metrics["positives"],
             "negatives": metrics["negatives"],
+            "observed_negatives": metrics["observed_negatives"],
+            "unobserved_negatives": metrics["unobserved_negatives"],
             "relevance_distribution": relevance_distribution,
             "period": _period(frame),
             "feature_count": metrics["features"],
@@ -917,12 +1317,16 @@ def _build_report(
             "roc_auc": metrics["roc_auc"],
             "roc_auc_available": metrics["roc_auc_available"],
             "roc_auc_note": metrics["roc_auc_note"],
+            "pr_auc": metrics["pr_auc"],
+            "brier_score": metrics["brier_score"],
+            "log_loss": metrics["log_loss"],
             "validation_roc_auc": metrics["validation_roc_auc"],
             "test_roc_auc": metrics["test_roc_auc"],
             "evaluation_split": metrics["evaluation_split"],
             "ranking": metrics["ranking"],
         },
         "baselines": metrics["baselines"],
+        "production": metrics.get("production"),
         "comparison": metrics["comparison"],
         "quality": quality,
         "promotion": promotion,
@@ -984,11 +1388,45 @@ def _train_and_save(
     columns = feature_columns(frame)
     try:
         model, metrics = _fit_and_evaluate(
-            frame, orders=orders, catalog_size=len(restaurants)
+            frame,
+            orders=orders,
+            catalog_size=len(restaurants),
+            restaurants=restaurants,
         )
     except InsufficientTrainingDataError as exc:
         logger.warning("Treino recusado: %s", exc)
         return None
+
+    previous = _previous_model()
+    production = _evaluate_previous_model(
+        previous,
+        frame,
+        orders=orders,
+        catalog_size=len(restaurants),
+        restaurants=restaurants,
+    )
+    metrics["production"] = production
+    if production.get("available") and production.get("ranking"):
+        production_ranking = production["ranking"]
+        metrics["comparison"].update(
+            {
+                "ndcg_at_k_delta_vs_production": round(
+                    metrics["ranking"]["ndcg_at_k"]
+                    - production_ranking["ndcg_at_k"],
+                    4,
+                ),
+                "map_at_k_delta_vs_production": round(
+                    metrics["ranking"]["map_at_k"]
+                    - production_ranking["map_at_k"],
+                    4,
+                ),
+                "precision_at_k_delta_vs_production": round(
+                    metrics["ranking"]["precision_at_k"]
+                    - production_ranking["precision_at_k"],
+                    4,
+                ),
+            }
+        )
 
     version = _model_version(source, frame, columns, dataset_hash)
     metadata = {
@@ -999,8 +1437,21 @@ def _train_and_save(
     }
     candidate_path = _save_candidate(model, columns, metadata, version)
     quality = _quality_assessment(metrics, metrics["split"]["strategy"])
-    previous = _previous_model()
-    promotion = _promotion_decision(metrics, quality, previous)
+    if source == "seed" and previous is not None:
+        # Seed é dado sintético/demonstrativo. Ele pode inicializar um modelo
+        # quando não há artefato, mas nunca deve substituir um modelo treinado
+        # com dados reais do banco.
+        promotion: dict[str, Any] = {
+            "decision": "kept_previous",
+            "promoted": False,
+            "reason": (
+                "Treino com dados de seed é apenas avaliação: o modelo em "
+                "produção não é substituído por um modelo treinado em dados "
+                "sintéticos. Use --source db para uma decisão de promoção."
+            ),
+        }
+    else:
+        promotion = _promotion_decision(metrics, quality, previous)
     promotion.update(
         {
             "candidate_path": str(candidate_path),

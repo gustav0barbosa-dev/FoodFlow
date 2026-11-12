@@ -250,12 +250,21 @@ dados de produção.
 
 O treino atual usa **split temporal** (treino/validação/teste por data do
 evento) com fallback explícito para split aleatório quando não há datas
-suficientes. O relatório salvo em `models/training_metrics.json` contém
-versão, data, features, parâmetros, ROC AUC de validação/teste,
-Precision@K, Recall@K, NDCG@K, MAP@K, cobertura e comparação com os
-baselines de popularidade e aleatório; `GET /api/v1/ml/metrics` apenas lê
-esse arquivo. O treino nunca roda dentro de uma requisição HTTP — o
-endpoint `/recommendations/train` responde `202` com o comando offline.
+suficientes. O relatório salvo em `models/training_metrics.json` segue o
+**schema v3** e contém versão, data, features, parâmetros, alvo `purchased`,
+política de negativos (observados `1.0`; não observados `0.1`), ROC
+AUC/PR AUC/Brier/Log Loss, Precision@K, Recall@K, NDCG@K, MAP@K, ILD@K,
+novidade, cobertura de catálogo/usuários, IC bootstrap por usuário,
+comparação com os baselines de popularidade/aleatório e com o **modelo em
+produção**, além da decisão de promoção/rollback. `GET /api/v1/ml/metrics`
+apenas lê esse arquivo. O treino nunca roda dentro de uma requisição HTTP —
+o endpoint `/recommendations/train` responde `202` com o comando offline.
+
+A promoção exige superar `max(melhor baseline, modelo em produção)` por uma
+margem mínima em NDCG@K ou MAP@K, sem degradação relevante na outra métrica.
+Se a produção não puder ser avaliada, a decisão é `insufficient_evidence`.
+Um treino `--source seed` é apenas avaliação: gera candidato e relatório, mas
+não substitui um modelo de produção existente.
 
 No MVP, o treino pode usar os pedidos do PostgreSQL
 (`python -m app.ml.train --source db`) ou o seed determinístico
@@ -303,8 +312,10 @@ estágio **experimental** e não é necessário para a API funcionar.
 
 A avaliação treina em pedidos antigos e mede pedidos recentes, com
 features do usuário calculadas apenas no histórico de treino (sem
-vazamento). Cada contexto é um par (usuário, turno); os candidatos são os
+vazamento). Cada contexto é uma ocasião de pedido; os candidatos são os
 12 restaurantes do seed. Métricas: AUC macro por contexto e NDCG@5 macro.
+**Estes números são avaliação offline do seed, não treino com dados reais
+de produção.**
 
 | Estratégia | AUC | NDCG@5 |
 |---|---|---|
@@ -488,10 +499,13 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
     contadores Redis. Eventos com `experiment_mode='demo'` são
     excluídos. `/api/v1/experiment/ab-test` informa a fase
     (`collecting`, `insufficient_data`, `ready` ou
-    `statistical_analysis`); `ready` não é significância. A análise
-    inferencial usa intervalo de Wilson e teste z com correção de
-    Bonferroni, além de detectar contaminação entre grupos.
--   **Testes automatizados:** backend com pytest (227 testes),
+    `statistical_analysis`); `ready` não é significância. A leitura e a
+    inferência usam a **coorte válida** (usuários contaminados
+    excluídos), com **bootstrap agrupado por usuário**, intervalo de
+    confiança, correção de Bonferroni e plano de amostra. O teste z por
+    impressão é apenas fallback explícito quando há menos de dois
+    usuários válidos por grupo.
+-   **Testes automatizados:** backend com pytest (239 testes),
     frontend web com lint/build/testes (206 testes) e mobile com
     `tsc --noEmit`.
 
