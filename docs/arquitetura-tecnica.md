@@ -250,15 +250,24 @@ dados de produção.
 
 O treino atual usa **split temporal** (treino/validação/teste por data do
 evento) com fallback explícito para split aleatório quando não há datas
-suficientes. O relatório salvo em `models/training_metrics.json` segue o
+suficientes. A avaliação principal usa **o catálogo inteiro** como candidatos
+para LightGBM, popularidade e aleatório; não há amostragem 1:3 no caminho
+oficial. O relatório salvo em `models/training_metrics.json` segue o
 **schema v3** e contém versão, data, features, parâmetros, alvo `purchased`,
 política de negativos (observados `1.0`; não observados `0.1`), ROC
-AUC/PR AUC/Brier/Log Loss, Precision@K, Recall@K, NDCG@K, MAP@K, ILD@K,
-novidade, cobertura de catálogo/usuários, IC bootstrap por usuário,
+AUC/PR AUC/Brier/Log Loss, curva de calibração com ECE, Precision@K, Recall@K,
+NDCG@K, MAP@K, ILD@K, novidade, cobertura de catálogo/usuários, IC bootstrap
+por usuário, análise de sensibilidade a negativos observados/não observados,
 comparação com os baselines de popularidade/aleatório e com o **modelo em
-produção**, além da decisão de promoção/rollback. `GET /api/v1/ml/metrics`
-apenas lê esse arquivo. O treino nunca roda dentro de uma requisição HTTP —
-o endpoint `/recommendations/train` responde `202` com o comando offline.
+produção**, avaliação rolling-window opcional, política temporal das features e
+a decisão de promoção/rollback. `GET /api/v1/ml/metrics` apenas lê esse arquivo.
+O treino nunca roda dentro de uma requisição HTTP — o endpoint
+`/recommendations/train` responde `202` com o comando offline.
+
+Atributos como rating, quantidade de avaliações, frete e tempo de entrega do
+restaurante são lidos do **estado atual**, sem snapshot histórico. O relatório
+registra esse risco em `feature_temporal_policy`; `--strict-temporal` exclui
+essas features. A solução definitiva é persistir snapshots históricos.
 
 A promoção exige superar `max(melhor baseline, modelo em produção)` por uma
 margem mínima em NDCG@K ou MAP@K, sem degradação relevante na outra métrica.
@@ -269,8 +278,9 @@ não substitui um modelo de produção existente.
 No MVP, o treino pode usar os pedidos do PostgreSQL
 (`python -m app.ml.train --source db`) ou o seed determinístico
 (`python -m app.ml.train --source seed`), que permite gerar o artefato
-sem depender de PostGIS. Posteriormente, os dados podem ser substituídos
-por interações reais do aplicativo.
+sem depender de PostGIS. Os flags `--strict-temporal` e `--rolling-window`
+adicionam, respectivamente, o modo temporal estrito e a avaliação
+walk-forward.
 
 ### 4.3 Uso de LLMs (experimental)
 
@@ -502,10 +512,14 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
     `statistical_analysis`); `ready` não é significância. A leitura e a
     inferência usam a **coorte válida** (usuários contaminados
     excluídos), com **bootstrap agrupado por usuário**, intervalo de
-    confiança, correção de Bonferroni e plano de amostra. O teste z por
+    confiança, correção de Bonferroni e plano de amostra. O grupo
+    `baseline` precisa de impressões e usuários mínimos; sem ele a
+    análise estatística fica bloqueada, mesmo que outros grupos tenham
+    volume. O p-valor vem de uma distribuição nula construída sob H0, e
+    a evidência principal é o IC 95% da diferença. O teste z por
     impressão é apenas fallback explícito quando há menos de dois
     usuários válidos por grupo.
--   **Testes automatizados:** backend com pytest (239 testes),
+-   **Testes automatizados:** backend com pytest (245 testes),
     frontend web com lint/build/testes (206 testes) e mobile com
     `tsc --noEmit`.
 

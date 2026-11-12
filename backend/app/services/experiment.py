@@ -276,14 +276,25 @@ def _bootstrap_difference(
     resamples: int = BOOTSTRAP_RESAMPLES,
     seed: str = "difference",
 ) -> dict[str, Any]:
-    """Teste bootstrap agrupado por usuário para a diferença de médias.
+    """Bootstrap agrupado por usuário para a diferença de médias.
 
     Cada grupo é reamostrado com reposição **por usuário**, preservando a
-    dependência entre impressões do mesmo usuário. O p-valor é bilateral e
-    aproximado pela distribuição bootstrap da diferença.
+    dependência entre impressões do mesmo usuário. O IC 95% vem da
+    distribuição bootstrap da diferença observada.
+
+    O p-valor usa uma distribuição nula construída explicitamente: as duas
+    amostras são centralizadas na média conjunta e reamostradas sob a hipótese
+    de que ambos os grupos vêm da mesma distribuição. Isso é diferente de usar
+    a proporção de diferenças positivas/negativas da distribuição observada,
+    que não é um teste formal sob H0.
     """
     if len(candidate) < 2 or len(baseline) < 2 or resamples <= 0:
-        return {"p_value": None, "confidence_interval": None}
+        return {
+            "p_value": None,
+            "confidence_interval": None,
+            "observed_difference": None,
+            "method": None,
+        }
     rng = random.Random(seed)
     differences: list[float] = []
     for _ in range(resamples):
@@ -292,15 +303,34 @@ def _bootstrap_difference(
         )
         baseline_mean = sum(rng.choice(baseline) for _ in baseline) / len(baseline)
         differences.append(candidate_mean - baseline_mean)
-    below = sum(1 for value in differences if value <= 0.0) / len(differences)
-    above = sum(1 for value in differences if value >= 0.0) / len(differences)
-    p_value = round(min(1.0, 2 * min(below, above)), 6)
+
+    observed = sum(candidate) / len(candidate) - sum(baseline) / len(baseline)
+
+    pooled = list(candidate) + list(baseline)
+    pooled_mean = sum(pooled) / len(pooled)
+    centered = [value - pooled_mean for value in pooled]
+    extreme = 0
+    for _ in range(resamples):
+        null_candidate = sum(rng.choice(centered) for _ in candidate) / len(
+            candidate
+        )
+        null_baseline = sum(rng.choice(centered) for _ in baseline) / len(
+            baseline
+        )
+        if abs(null_candidate - null_baseline) >= abs(observed):
+            extreme += 1
+    # Correção de continuidade: nunca reportar p=0 com um número finito de
+    # reamostragens.
+    p_value = round((extreme + 1) / (resamples + 1), 6)
+
     return {
         "p_value": p_value,
         "confidence_interval": {
             "low": round(_percentile(differences, 0.025), 4),
             "high": round(_percentile(differences, 0.975), 4),
         },
+        "observed_difference": round(observed, 4),
+        "method": "bootstrap_null_distribution_by_user",
     }
 
 
@@ -803,6 +833,24 @@ def summarize_experiment(
         for group, values in valid_groups.items()
         if values["impressions"] > 0
     ]
+    # A inferência é sempre contra o baseline. Sem baseline com volume, não há
+    # comparação válida — mesmo que dois grupos variantes tenham dados.
+    comparison_groups = [
+        group
+        for group in (EXPERIMENT_PERSONALIZED, EXPERIMENT_DISTANCE)
+        if valid_groups[group]["impressions"] > 0
+    ]
+    baseline_valid = valid_groups[EXPERIMENT_BASELINE]
+    baseline_ready = (
+        baseline_valid["impressions"] >= min_impressions
+        and baseline_valid["users"] >= statistical_min_users_per_group
+    )
+    ready_comparison_groups = [
+        group
+        for group in comparison_groups
+        if valid_groups[group]["impressions"] >= min_impressions
+        and valid_groups[group]["users"] >= statistical_min_users_per_group
+    ]
 
     resolved_unique_users = (
         unique_users if unique_users is not None else exposed_users
@@ -815,12 +863,8 @@ def summarize_experiment(
 
     statistical_ready = (
         valid_total_impressions >= statistical_min_impressions
-        and len(valid_groups_with_impressions) >= 2
-        and all(
-            valid_groups[group]["impressions"] >= min_impressions
-            and valid_groups[group]["users"] >= statistical_min_users_per_group
-            for group in valid_groups_with_impressions
-        )
+        and baseline_ready
+        and bool(ready_comparison_groups)
     )
     descriptive_ready = (
         valid_total_impressions >= min_impressions
@@ -858,12 +902,21 @@ def summarize_experiment(
         )
     elif not statistical_ready:
         phase = "ready"
-        message = (
-            "Volume mínimo para leitura descritiva atingido na coorte válida. "
-            "Isso não é significância estatística; a análise inferencial ainda "
-            "não foi liberada."
-            + contamination_note
-        )
+        if not baseline_ready:
+            message = (
+                "Volume mínimo descritivo atingido, mas o grupo baseline não "
+                "tem impressões/usuários suficientes na coorte válida. Sem "
+                "baseline não há comparação inferencial válida; a análise "
+                "estatística permanece bloqueada."
+                + contamination_note
+            )
+        else:
+            message = (
+                "Volume mínimo para leitura descritiva atingido na coorte "
+                "válida. Isso não é significância estatística; a análise "
+                "inferencial ainda não foi liberada."
+                + contamination_note
+            )
     else:
         phase = "statistical_analysis"
         message = (
@@ -893,19 +946,30 @@ def summarize_experiment(
             key=lambda group: valid_groups[group]["conversion_rate"],
         )
 
-    planned_comparisons = 2 * max(len(valid_groups_with_impressions) - 1, 1)
+    planned_comparisons = 2 * max(len(ready_comparison_groups), 1)
     corrected_alpha = alpha / planned_comparisons
     statistical_analysis: dict[str, Any] = {
         "available": False,
         "reason": (
-            "Amostra insuficiente para inferência na coorte válida. "
-            f"Requer ao menos {statistical_min_impressions} impressões totais "
-            f"e {statistical_min_users_per_group} usuários por grupo."
+            (
+                "O grupo baseline não tem impressões/usuários suficientes na "
+                "coorte válida; não há comparação inferencial válida. "
+            )
+            if not baseline_ready
+            else (
+                "Amostra insuficiente para inferência na coorte válida. "
+                f"Requer ao menos {statistical_min_impressions} impressões "
+                f"totais e {statistical_min_users_per_group} usuários por "
+                "grupo comparado (incluindo o baseline). "
+            )
         ),
         "planned_comparisons": planned_comparisons,
         "alpha": alpha,
         "corrected_alpha": round(corrected_alpha, 6),
         "unit": "user",
+        "baseline_ready": baseline_ready,
+        "comparison_groups": comparison_groups,
+        "ready_comparison_groups": ready_comparison_groups,
     }
     if statistical_ready:
         comparisons: list[dict[str, Any]] = []
@@ -915,7 +979,7 @@ def summarize_experiment(
         ):
             baseline = valid_groups[EXPERIMENT_BASELINE]
             baseline_values = user_values[EXPERIMENT_BASELINE][metric]
-            for group in (EXPERIMENT_PERSONALIZED, EXPERIMENT_DISTANCE):
+            for group in ready_comparison_groups:
                 candidate = valid_groups[group]
                 if (
                     candidate["impressions"] <= 0
@@ -930,7 +994,8 @@ def summarize_experiment(
                     seed=f"{metric}:{group}",
                 )
                 p_value = bootstrap["p_value"]
-                method = "bootstrap_by_user"
+                method = bootstrap.get("method") or "bootstrap_by_user"
+                confidence_interval = bootstrap["confidence_interval"]
                 if p_value is None:
                     # Menos de dois usuários válidos por grupo: o bootstrap não
                     # é identificável. O teste por impressão é apenas fallback
@@ -943,6 +1008,26 @@ def summarize_experiment(
                         baseline["impressions"],
                     )
                     method = "z_test_by_impression_fallback"
+                    confidence_interval = None
+                ci_excludes_zero = bool(
+                    confidence_interval
+                    and (
+                        confidence_interval["low"] > 0
+                        or confidence_interval["high"] < 0
+                    )
+                )
+                # A evidência principal é o IC da diferença. O p-valor só
+                # declara significância quando o IC também exclui zero; no
+                # fallback z (sem IC bootstrap), usa-se apenas o p-valor.
+                significant = (
+                    p_value is not None
+                    and p_value < corrected_alpha
+                    and (
+                        ci_excludes_zero
+                        if confidence_interval is not None
+                        else True
+                    )
+                )
                 absolute = round(candidate[metric] - baseline[metric], 4)
                 relative = (
                     round(absolute / baseline[metric], 4)
@@ -977,32 +1062,41 @@ def summarize_experiment(
                             ),
                         },
                         "p_value": p_value,
-                        "confidence_interval": bootstrap["confidence_interval"],
+                        "confidence_interval": confidence_interval,
+                        "confidence_interval_excludes_zero": ci_excludes_zero,
                         "method": method,
-                        "significant": (
-                            p_value is not None and p_value < corrected_alpha
-                        ),
+                        "significant": significant,
                     }
                 )
         statistical_analysis = {
             "available": True,
             "method": (
-                "Bootstrap agrupado por usuário (IC 95% da diferença de "
-                "médias por usuário) com p-valor bilateral e correção de "
-                "Bonferroni. Quando há menos de dois usuários válidos por "
-                "grupo, usa-se teste z por impressão como fallback explícito."
+                "Bootstrap agrupado por usuário: IC 95% da diferença de médias "
+                "por usuário e p-valor de uma distribuição nula construída "
+                "explicitamente (amostras centralizadas na média conjunta), "
+                "com correção de Bonferroni. A evidência principal é o IC da "
+                "diferença; quando ele exclui zero e p < alpha corrigido, a "
+                "diferença é marcada como significante. Com menos de dois "
+                "usuários válidos por grupo, usa-se teste z por impressão como "
+                "fallback explícito, sem IC bootstrap."
             ),
             "alpha": alpha,
             "corrected_alpha": round(corrected_alpha, 6),
             "planned_comparisons": planned_comparisons,
             "unit": "user",
             "bootstrap_resamples": bootstrap_resamples,
+            "baseline_ready": baseline_ready,
+            "comparison_groups": comparison_groups,
+            "ready_comparison_groups": ready_comparison_groups,
             "comparisons": comparisons,
             "notes": [
                 "CTR e conversão por impressão continuam descritivos; a "
                 "inferência principal usa a média por usuário.",
-                "O p-valor bootstrap é aproximado e não substitui um desenho "
-                "amostral com poder previamente calculado.",
+                "O p-valor bootstrap vem de uma distribuição nula construída "
+                "sob H0; não é a proporção de diferenças positivas da "
+                "distribuição observada.",
+                "O IC 95% da diferença é o critério principal de evidência; "
+                "significância exige IC excluindo zero e p < alpha corrigido.",
             ],
         }
         comparison["winner_declared"] = any(
@@ -1048,6 +1142,8 @@ def summarize_experiment(
         # distinta real quando o chamador a fornece.
         "exposed_users": exposed_users,
         "valid_exposed_users": valid_exposed_users,
+        "baseline_ready": baseline_ready,
+        "comparison_groups": comparison_groups,
         "unique_users": (
             unique_users
             if unique_users is not None

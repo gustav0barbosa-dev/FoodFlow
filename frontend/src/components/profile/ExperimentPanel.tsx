@@ -319,6 +319,19 @@ export function ExperimentPanel({
             <h3 className="text-xs font-semibold text-ink mb-1">
               Comparação estatística
             </h3>
+            {results.baseline_ready === false && (
+              <p className="mb-2 rounded-lg bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                O grupo baseline ainda não tem impressões/usuários suficientes
+                na coorte válida. Sem baseline não existe comparação
+                inferencial válida, mesmo que outros grupos tenham volume.
+              </p>
+            )}
+            {results.comparison_groups && results.comparison_groups.length > 0 && (
+              <p className="mb-2 text-[10px] text-ink-soft">
+                Grupos comparados contra o baseline:{' '}
+                {results.comparison_groups.join(', ')}.
+              </p>
+            )}
             {!results.statistical_analysis.available ? (
               <p className="text-[11px] text-ink-soft">
                 {results.statistical_analysis.reason ??
@@ -376,12 +389,15 @@ export function ExperimentPanel({
                               {pValue(item.p_value)}
                             </td>
                             <td className="py-1 pr-2">
-                              {item.method === 'bootstrap_by_user'
-                                ? 'bootstrap/usuário'
-                                : item.method ===
-                                    'z_test_by_impression_fallback'
-                                  ? 'z/impressão (fallback)'
-                                  : (item.method ?? '—')}
+                              {item.method ===
+                              'bootstrap_null_distribution_by_user'
+                                ? 'bootstrap/usuário (H0 nula)'
+                                : item.method === 'bootstrap_by_user'
+                                  ? 'bootstrap/usuário'
+                                  : item.method ===
+                                      'z_test_by_impression_fallback'
+                                    ? 'z/impressão (fallback)'
+                                    : (item.method ?? '—')}
                             </td>
                             <td className="py-1">
                               {item.significant ? 'Sim' : 'Não'}
@@ -398,6 +414,11 @@ export function ExperimentPanel({
               {results.comparison.winner_declared
                 ? 'Há diferença estatisticamente significante após correção para múltiplas comparações.'
                 : results.comparison.note}
+            </p>
+            <p className="mt-1 text-[10px] text-ink-soft">
+              Evidência principal: IC 95% da diferença por usuário. Um resultado
+              só é marcado como significante quando o IC exclui zero e o
+              p-valor fica abaixo do α corrigido.
             </p>
           </div>
 

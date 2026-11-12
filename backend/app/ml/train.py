@@ -34,7 +34,7 @@ import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import NormalDist
+from statistics import NormalDist, mean, pstdev
 from typing import Any, Iterable, Sequence
 
 import joblib
@@ -52,9 +52,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import APP_TIMEZONE, TURNOS, Turno
 from app.database import AsyncSessionLocal
 from app.ml.features import (
+    CURRENT_STATE_RESTAURANT_FEATURES,
     _as_utc,
     build_candidate_features,
     build_user_features,
+    feature_temporal_policy,
     order_turno,
 )
 from app.ml import recommender as recommender_module
@@ -676,10 +678,19 @@ def _strategy_contexts(
     frame: pd.DataFrame,
     model_scores: Sequence[float],
     orders: list[Order] | None,
+    *,
+    candidate_pool: str = "all",
 ) -> dict[str, list[dict[str, Any]]]:
-    """Monta os mesmos contextos/candidatos para as três estratégias."""
+    """Monta os mesmos contextos/candidatos para as três estratégias.
+
+    ``candidate_pool`` permite análises de sensibilidade:
+
+    - ``all``: catálogo inteiro (avaliação principal);
+    - ``observed``: positivos + negativos com exposição observada;
+    - ``unobserved``: positivos + negativos sem exposição observada.
+    """
     working = frame[
-        ["_context_id", "_user_id", "_restaurant_id", "purchased"]
+        ["_context_id", "_user_id", "_restaurant_id", "purchased", "_observed"]
     ].copy()
     working["_model_score"] = list(model_scores)
     popularity = _popularity_by_context(frame, orders)
@@ -689,6 +700,10 @@ def _strategy_contexts(
     random_contexts: list[dict[str, Any]] = []
 
     for context_id, group in working.groupby("_context_id", sort=False):
+        if candidate_pool == "observed":
+            group = group[(group["purchased"] == 1) | group["_observed"]]
+        elif candidate_pool == "unobserved":
+            group = group[(group["purchased"] == 1) | ~group["_observed"]]
         context_key = str(context_id)
         user_id = str(group["_user_id"].iloc[0])
         popularity_scores = popularity.get(context_key, {})
@@ -725,6 +740,75 @@ def _strategy_contexts(
         "model": model_contexts,
         "popularity": popularity_contexts,
         "random": random_contexts,
+    }
+
+
+def _ranking_sensitivity(
+    evaluation_frame: pd.DataFrame,
+    model_scores: Sequence[float],
+    orders: list[Order] | None,
+    *,
+    catalog_size: int,
+    item_attributes: dict[str, set[str]] | None,
+) -> dict[str, Any]:
+    """Sensibilidade das métricas aos negativos observados/não observados.
+
+    A avaliação principal continua usando o catálogo inteiro. Esta análise
+    responde a uma pergunta diferente: o resultado muda se restringirmos os
+    candidatos a negativos com exposição observada ou a negativos sem
+    exposição? Cada pool mantém os positivos e apenas o subconjunto de
+    negativos indicado.
+    """
+    pools: dict[str, Any] = {}
+    for pool, label in (
+        ("observed", "negativos_observados"),
+        ("unobserved", "negativos_nao_observados"),
+    ):
+        negative_mask = evaluation_frame["purchased"] == 0
+        selected = (
+            evaluation_frame["_observed"]
+            if pool == "observed"
+            else ~evaluation_frame["_observed"]
+        )
+        negative_count = int((negative_mask & selected).sum())
+        positive_count = int((evaluation_frame["purchased"] == 1).sum())
+        entry: dict[str, Any] = {
+            "available": negative_count > 0,
+            "positives": positive_count,
+            "negatives": negative_count,
+            "reason": None,
+            "metrics": {},
+        }
+        if negative_count == 0:
+            entry["reason"] = (
+                "Não há negativos deste tipo no conjunto de avaliação; "
+                "qualquer métrica seria trivial (apenas positivos)."
+            )
+            pools[label] = entry
+            continue
+        contexts = _strategy_contexts(
+            evaluation_frame,
+            model_scores,
+            orders,
+            candidate_pool=pool,
+        )
+        entry["metrics"] = {
+            name: compute_ranking_metrics(
+                contexts[name],
+                catalog_size=catalog_size,
+                item_attributes=item_attributes,
+            )
+            for name in ("model", "popularity", "random")
+        }
+        pools[label] = entry
+    return {
+        "primary": "all_candidates",
+        "pools": pools,
+        "note": (
+            "Análise de sensibilidade, não substitui a avaliação principal do "
+            "catálogo inteiro. Restringir candidatos muda o objetivo da "
+            "métrica; compare os pools apenas como diagnóstico."
+        ),
     }
 
 
@@ -805,38 +889,122 @@ def _roc_auc(
         return None, f"ROC AUC indisponível: {exc}"
 
 
+def _calibration_curve(
+    labels: Sequence[int],
+    scores: Sequence[float],
+    *,
+    bins: int = 10,
+) -> dict[str, Any] | None:
+    """Curva de calibração por bins e Expected Calibration Error (ECE).
+
+    Cada bin compara a probabilidade média prevista com a taxa observada de
+    positivos. O ECE é a média ponderada pelo número de amostras. Não substitui
+    Brier/Log Loss: é um diagnóstico visual/numérico da calibração.
+    """
+    pairs = [
+        (float(score), int(label))
+        for label, score in zip(labels, scores, strict=True)
+    ]
+    if not pairs or bins <= 0:
+        return None
+    total = len(pairs)
+    entries: list[dict[str, Any]] = []
+    weighted_error = 0.0
+    max_error = 0.0
+    for index in range(bins):
+        low = index / bins
+        high = (index + 1) / bins
+        members = [
+            (score, label)
+            for score, label in pairs
+            if (low <= score < high) or (index == bins - 1 and score == 1.0)
+        ]
+        if not members:
+            continue
+        mean_predicted = sum(score for score, _ in members) / len(members)
+        observed = sum(label for _, label in members) / len(members)
+        error = abs(mean_predicted - observed)
+        weighted_error += error * len(members) / total
+        max_error = max(max_error, error)
+        entries.append(
+            {
+                "bin_low": round(low, 4),
+                "bin_high": round(high, 4),
+                "count": len(members),
+                "mean_predicted": round(mean_predicted, 4),
+                "observed_rate": round(observed, 4),
+            }
+        )
+    return {
+        "bins": entries,
+        "expected_calibration_error": round(weighted_error, 4),
+        "max_calibration_error": round(max_error, 4),
+        "samples": total,
+    }
+
+
 def _predictive_metrics(
     labels: Sequence[int], scores: Sequence[float]
 ) -> dict[str, Any]:
-    """ROC AUC, PR AUC, Brier e Log Loss sob a mesma regra de disponibilidade.
+    """ROC AUC, PR AUC, Brier, Log Loss e calibração, com disponibilidade própria.
 
-    O Brier mede calibração (erro quadrático das probabilidades) e o Log Loss
-    penaliza confiança errada. Nenhum deles substitui as métricas de ranking.
+    ROC AUC e PR AUC exigem as duas classes. Brier, Log Loss e a curva de
+    calibração podem ser calculados mesmo quando há uma única classe, desde que
+    existam probabilidades e rótulos válidos. Condicionar todas as métricas à
+    ROC AUC esconderia informação de calibração em amostras pequenas.
     """
     y = [int(value) for value in labels]
     probabilities = [float(value) for value in scores]
     roc_auc, note = _roc_auc(y, probabilities)
+    positives = sum(y)
+    negatives = len(y) - positives
     result: dict[str, Any] = {
         "roc_auc": roc_auc,
         "roc_auc_available": roc_auc is not None,
         "roc_auc_note": note,
         "pr_auc": None,
+        "pr_auc_note": None,
         "brier_score": None,
         "log_loss": None,
+        "calibration": None,
+        "predictive_notes": {},
     }
-    if roc_auc is None:
-        return result
-    try:
-        result["pr_auc"] = round(
-            float(average_precision_score(y, probabilities)), 4
+    if not y or len(y) != len(probabilities):
+        result["predictive_notes"]["all"] = (
+            "Rótulos/probabilidades ausentes ou com tamanhos diferentes."
         )
+        return result
+
+    if positives > 0 and negatives > 0:
+        try:
+            result["pr_auc"] = round(
+                float(average_precision_score(y, probabilities)), 4
+            )
+        except ValueError as exc:  # pragma: no cover - proteção defensiva
+            result["pr_auc_note"] = f"PR AUC indisponível: {exc}"
+    else:
+        result["pr_auc_note"] = (
+            "PR AUC exige pelo menos um positivo e um negativo."
+        )
+
+    try:
         result["brier_score"] = round(
             float(brier_score_loss(y, probabilities)), 4
         )
-        clipped = [min(max(value, 1e-6), 1 - 1e-6) for value in probabilities]
-        result["log_loss"] = round(float(log_loss(y, clipped, labels=[0, 1])), 4)
     except ValueError as exc:  # pragma: no cover - proteção defensiva
-        result["roc_auc_note"] = f"Métricas preditivas indisponíveis: {exc}"
+        result["predictive_notes"]["brier_score"] = (
+            f"Brier indisponível: {exc}"
+        )
+
+    try:
+        clipped = [min(max(value, 1e-6), 1 - 1e-6) for value in probabilities]
+        result["log_loss"] = round(
+            float(log_loss(y, clipped, labels=[0, 1])), 4
+        )
+    except ValueError as exc:  # pragma: no cover - proteção defensiva
+        result["predictive_notes"]["log_loss"] = f"Log Loss indisponível: {exc}"
+
+    result["calibration"] = _calibration_curve(y, probabilities)
     return result
 
 
@@ -862,11 +1030,22 @@ def _fit_and_evaluate(
     orders: list[Order] | None = None,
     catalog_size: int | None = None,
     restaurants: Sequence[Restaurant] | None = None,
+    *,
+    strict_temporal: bool = False,
 ) -> tuple[LGBMClassifier, dict[str, Any]]:
     if frame.empty:
         raise InsufficientTrainingDataError("Dataset de treino vazio.")
 
-    columns = feature_columns(frame)
+    all_columns = feature_columns(frame)
+    columns = (
+        [
+            name
+            for name in all_columns
+            if name not in CURRENT_STATE_RESTAURANT_FEATURES
+        ]
+        if strict_temporal
+        else all_columns
+    )
     if not columns:
         raise InsufficientTrainingDataError("Nenhuma feature disponível.")
 
@@ -926,6 +1105,13 @@ def _fit_and_evaluate(
         )
         for name in ("popularity", "random")
     }
+    sensitivity = _ranking_sensitivity(
+        evaluation_frame,
+        model_scores,
+        orders,
+        catalog_size=resolved_catalog_size,
+        item_attributes=attributes,
+    )
 
     test_scores = (
         model.predict_proba(X_test)[:, 1].tolist() if len(X_test) else []
@@ -952,6 +1138,8 @@ def _fit_and_evaluate(
         ),
         "features": len(columns),
         "feature_names": columns,
+        "temporal_mode": "strict" if strict_temporal else "current_state_attributes",
+        "feature_temporal_policy": feature_temporal_policy(),
         "params": MODEL_PARAMS,
         "seed": RANDOM_SEED,
         "label_semantics": LABEL_SEMANTICS,
@@ -975,11 +1163,15 @@ def _fit_and_evaluate(
         "roc_auc_available": test_predictive["roc_auc_available"],
         "roc_auc_note": test_predictive["roc_auc_note"],
         "pr_auc": test_predictive["pr_auc"],
+        "pr_auc_note": test_predictive["pr_auc_note"],
         "brier_score": test_predictive["brier_score"],
         "log_loss": test_predictive["log_loss"],
+        "calibration": test_predictive["calibration"],
+        "predictive_notes": test_predictive["predictive_notes"],
         "validation_roc_auc": validation_predictive["roc_auc"],
         "test_roc_auc": test_predictive["roc_auc"],
         "ranking": model_ranking,
+        "ranking_sensitivity": sensitivity,
         "baselines": baselines,
         "comparison": {
             "ndcg_at_k_delta_vs_popularity": round(
@@ -1007,6 +1199,220 @@ def _fit_and_evaluate(
         },
     }
     return model, metrics
+
+
+def rolling_window_evaluation(
+    frame: pd.DataFrame,
+    orders: list[Order] | None = None,
+    restaurants: Sequence[Restaurant] | None = None,
+    *,
+    windows: int = 3,
+    catalog_size: int | None = None,
+    strict_temporal: bool = False,
+) -> dict[str, Any]:
+    """Avaliação walk-forward com janelas expansíveis.
+
+    Cada fold treina em contextos antigos, valida no bloco imediatamente
+    anterior ao teste e testa no bloco seguinte. O objetivo é medir estabilidade
+    temporal, não escolher hiperparâmetros no teste. Com menos contextos do que
+    o necessário, retorna ``available=False`` com motivo explícito.
+    """
+    if windows < 2:
+        return {
+            "available": False,
+            "windows": windows,
+            "folds": [],
+            "reason": "São necessárias pelo menos 2 janelas para avaliar estabilidade.",
+        }
+    context_times = (
+        frame.groupby("_context_id")["_event_time"].min().sort_values()
+    )
+    context_ids = list(context_times.index)
+    total_contexts = len(context_ids)
+    minimum_contexts = (windows + 1) * 2
+    if total_contexts < minimum_contexts:
+        return {
+            "available": False,
+            "windows": windows,
+            "folds": [],
+            "reason": (
+                f"Contextos insuficientes para {windows} janelas: "
+                f"{total_contexts} < {minimum_contexts}."
+            ),
+        }
+
+    all_columns = feature_columns(frame)
+    columns = (
+        [
+            name
+            for name in all_columns
+            if name not in CURRENT_STATE_RESTAURANT_FEATURES
+        ]
+        if strict_temporal
+        else all_columns
+    )
+    if not columns:
+        return {
+            "available": False,
+            "windows": windows,
+            "folds": [],
+            "reason": "Nenhuma feature disponível após o filtro temporal.",
+        }
+
+    test_size = max(1, total_contexts // (windows + 1))
+    attributes = _item_attributes(restaurants) if restaurants else None
+    resolved_catalog = catalog_size or int(frame["_restaurant_id"].nunique())
+    folds: list[dict[str, Any]] = []
+
+    for fold_index in range(windows):
+        test_end = total_contexts - test_size * (windows - fold_index - 1)
+        test_start = test_end - test_size
+        train_end = test_start
+        validation_size = max(1, test_size // 2)
+        train_stop = max(2, train_end - validation_size)
+        if train_stop >= train_end or test_start < train_stop:
+            continue
+        train_ids = context_ids[:train_stop]
+        validation_ids = context_ids[train_stop:train_end]
+        test_ids = context_ids[test_start:test_end]
+
+        train_mask = frame["_context_id"].isin(train_ids)
+        validation_mask = frame["_context_id"].isin(validation_ids)
+        test_mask = frame["_context_id"].isin(test_ids)
+        train_frame = frame.loc[train_mask]
+        validation_frame = frame.loc[validation_mask]
+        test_frame = frame.loc[test_mask]
+        if train_frame.empty or test_frame.empty:
+            continue
+        y_train = train_frame["purchased"].astype(int)
+        y_validation = validation_frame["purchased"].astype(int)
+        if y_train.nunique() < 2:
+            folds.append(
+                {
+                    "fold": fold_index + 1,
+                    "available": False,
+                    "reason": "Treino do fold sem as duas classes.",
+                    "train_contexts": len(train_ids),
+                    "validation_contexts": len(validation_ids),
+                    "test_contexts": len(test_ids),
+                }
+            )
+            continue
+
+        model = LGBMClassifier(**MODEL_PARAMS)
+        if len(validation_frame) and y_validation.nunique() == 2:
+            model.fit(
+                train_frame[columns].fillna(0.0).astype(float),
+                y_train,
+                sample_weight=train_frame["_sample_weight"].astype(float),
+                eval_set=[
+                    (
+                        validation_frame[columns].fillna(0.0).astype(float),
+                        y_validation,
+                    )
+                ],
+                callbacks=[early_stopping(30, verbose=False)],
+            )
+        else:
+            model.fit(
+                train_frame[columns].fillna(0.0).astype(float),
+                y_train,
+                sample_weight=train_frame["_sample_weight"].astype(float),
+            )
+
+        test_scores = model.predict_proba(
+            test_frame[columns].fillna(0.0).astype(float)
+        )[:, 1].tolist()
+        strategies = _strategy_contexts(test_frame, test_scores, orders)
+        ranking = {
+            name: compute_ranking_metrics(
+                strategies[name],
+                catalog_size=resolved_catalog,
+                item_attributes=attributes,
+            )
+            for name in ("model", "popularity", "random")
+        }
+        predictive = _predictive_metrics(
+            test_frame["purchased"].astype(int).tolist(), test_scores
+        )
+        folds.append(
+            {
+                "fold": fold_index + 1,
+                "available": True,
+                "train_contexts": len(train_ids),
+                "validation_contexts": len(validation_ids),
+                "test_contexts": len(test_ids),
+                "test_period": _period(test_frame),
+                "ranking": ranking["model"],
+                "baselines": {
+                    "popularity": ranking["popularity"],
+                    "random": ranking["random"],
+                },
+                "predictive": predictive,
+            }
+        )
+
+    available_folds = [fold for fold in folds if fold.get("available")]
+    summary: dict[str, Any] = {}
+    if available_folds:
+        for strategy, key in (
+            ("lightgbm", "ranking"),
+            ("popularity", "baselines"),
+            ("random", "baselines"),
+        ):
+            values: dict[str, list[float]] = {}
+            for fold in available_folds:
+                ranking = (
+                    fold["ranking"]
+                    if strategy == "lightgbm"
+                    else fold["baselines"][strategy]
+                )
+                for metric in (
+                    "precision_at_k",
+                    "recall_at_k",
+                    "ndcg_at_k",
+                    "map_at_k",
+                ):
+                    values.setdefault(metric, []).append(float(ranking[metric]))
+            summary[strategy] = {
+                metric: {
+                    "mean": round(mean(series), 4),
+                    "std": round(pstdev(series), 4),
+                    "min": round(min(series), 4),
+                    "max": round(max(series), 4),
+                }
+                for metric, series in values.items()
+            }
+        predictive_values: dict[str, list[float]] = {}
+        for fold in available_folds:
+            predictive = fold["predictive"]
+            for metric in ("roc_auc", "pr_auc", "brier_score", "log_loss"):
+                value = predictive.get(metric)
+                if value is not None:
+                    predictive_values.setdefault(metric, []).append(float(value))
+        summary["predictive"] = {
+            metric: {
+                "mean": round(mean(series), 4),
+                "std": round(pstdev(series), 4),
+            }
+            for metric, series in predictive_values.items()
+        }
+
+    return {
+        "available": bool(available_folds),
+        "windows": windows,
+        "folds": folds,
+        "summary": summary,
+        "reason": None
+        if available_folds
+        else "Nenhum fold pôde ser treinado/avaliado com os dados disponíveis.",
+        "note": (
+            "Janelas expansíveis: treino em contextos antigos, validação no "
+            "bloco anterior ao teste e teste no bloco seguinte. A média entre "
+            "janelas não substitui a pior janela; resultados instáveis não "
+            "autorizam promoção."
+        ),
+    }
 
 
 def _model_version(
@@ -1064,6 +1470,16 @@ def _quality_assessment(
     limitations.append(
         "As métricas de ranking são macro-médias por contexto; contextos sem "
         "item relevante entram como 0."
+    )
+    if metrics.get("temporal_mode") != "strict":
+        limitations.append(
+            "Atributos do restaurante (rating, nº de avaliações, frete e tempo "
+            "de entrega) vêm do estado atual, não de um snapshot histórico; "
+            "pode haver vazamento temporal. Use --strict-temporal para excluí-los."
+        )
+    limitations.append(
+        "A análise de sensibilidade observado/não observado é diagnóstica; a "
+        "avaliação principal continua usando o catálogo inteiro."
     )
     if not metrics["roc_auc_available"]:
         limitations.append(
@@ -1310,6 +1726,8 @@ def _build_report(
             "feature_count": metrics["features"],
         },
         "features": metrics["feature_names"],
+        "temporal_mode": metrics.get("temporal_mode"),
+        "feature_temporal_policy": metrics.get("feature_temporal_policy"),
         "params": metrics["params"],
         "seed": metrics["seed"],
         "split": metrics["split"],
@@ -1318,15 +1736,20 @@ def _build_report(
             "roc_auc_available": metrics["roc_auc_available"],
             "roc_auc_note": metrics["roc_auc_note"],
             "pr_auc": metrics["pr_auc"],
+            "pr_auc_note": metrics.get("pr_auc_note"),
             "brier_score": metrics["brier_score"],
             "log_loss": metrics["log_loss"],
+            "calibration": metrics.get("calibration"),
+            "predictive_notes": metrics.get("predictive_notes") or {},
             "validation_roc_auc": metrics["validation_roc_auc"],
             "test_roc_auc": metrics["test_roc_auc"],
             "evaluation_split": metrics["evaluation_split"],
             "ranking": metrics["ranking"],
+            "ranking_sensitivity": metrics.get("ranking_sensitivity"),
         },
         "baselines": metrics["baselines"],
         "production": metrics.get("production"),
+        "rolling_window": metrics.get("rolling_window"),
         "comparison": metrics["comparison"],
         "quality": quality,
         "promotion": promotion,
@@ -1376,6 +1799,8 @@ def _train_and_save(
     orders: list[Order],
     restaurants: list[Restaurant],
     interactions: list[UserRestaurantInteraction] | None = None,
+    strict_temporal: bool = False,
+    rolling_window: bool = False,
 ) -> dict[str, Any] | None:
     frame = build_training_frame(
         users, orders, restaurants, interactions=interactions
@@ -1392,6 +1817,7 @@ def _train_and_save(
             orders=orders,
             catalog_size=len(restaurants),
             restaurants=restaurants,
+            strict_temporal=strict_temporal,
         )
     except InsufficientTrainingDataError as exc:
         logger.warning("Treino recusado: %s", exc)
@@ -1406,6 +1832,19 @@ def _train_and_save(
         restaurants=restaurants,
     )
     metrics["production"] = production
+    if rolling_window:
+        metrics["rolling_window"] = rolling_window_evaluation(
+            frame,
+            orders=orders,
+            restaurants=restaurants,
+            catalog_size=len(restaurants),
+            strict_temporal=strict_temporal,
+        )
+    else:
+        metrics["rolling_window"] = {
+            "available": False,
+            "reason": "Não solicitada nesta execução (use --rolling-window).",
+        }
     if production.get("available") and production.get("ranking"):
         production_ranking = production["ranking"]
         metrics["comparison"].update(
@@ -1594,7 +2033,9 @@ def build_seed_entities(
     return users, orders, restaurants
 
 
-def train_from_seed() -> dict[str, Any] | None:
+def train_from_seed(
+    *, strict_temporal: bool = False, rolling_window: bool = False
+) -> dict[str, Any] | None:
     """Treina o LightGBM usando o seed determinístico, sem acessar o banco."""
     users, orders, restaurants = build_seed_entities()
     return _train_and_save(
@@ -1602,10 +2043,14 @@ def train_from_seed() -> dict[str, Any] | None:
         users=users,
         orders=orders,
         restaurants=restaurants,
+        strict_temporal=strict_temporal,
+        rolling_window=rolling_window,
     )
 
 
-async def train() -> dict[str, Any] | None:
+async def train(
+    *, strict_temporal: bool = False, rolling_window: bool = False
+) -> dict[str, Any] | None:
     async with AsyncSessionLocal() as session:
         users, orders, restaurants, interactions = await load_training_data(session)
 
@@ -1615,6 +2060,8 @@ async def train() -> dict[str, Any] | None:
         orders=orders,
         restaurants=restaurants,
         interactions=interactions,
+        strict_temporal=strict_temporal,
+        rolling_window=rolling_window,
     )
     if result is None:
         return None
@@ -1649,12 +2096,33 @@ def main() -> int:
         default="db",
         help="'db' usa os pedidos do PostgreSQL; 'seed' usa o seed determinístico.",
     )
+    parser.add_argument(
+        "--strict-temporal",
+        action="store_true",
+        help=(
+            "Exclui atributos atuais do restaurante (rating, avaliações, frete, "
+            "tempo de entrega) para reduzir risco de vazamento temporal."
+        ),
+    )
+    parser.add_argument(
+        "--rolling-window",
+        action="store_true",
+        help="Adiciona avaliação walk-forward com múltiplas janelas temporais.",
+    )
     args = parser.parse_args()
 
     if args.source == "seed":
-        result = train_from_seed()
+        result = train_from_seed(
+            strict_temporal=args.strict_temporal,
+            rolling_window=args.rolling_window,
+        )
     else:
-        result = asyncio.run(train())
+        result = asyncio.run(
+            train(
+                strict_temporal=args.strict_temporal,
+                rolling_window=args.rolling_window,
+            )
+        )
 
     if result is None:
         print("Dados insuficientes para treino; modelo nao salvo.")

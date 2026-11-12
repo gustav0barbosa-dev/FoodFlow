@@ -414,6 +414,12 @@ export interface ApiBootstrapInterval {
   unit: string
 }
 
+/** IC 95% da diferença entre grupos (bootstrap por usuário). */
+export interface ApiDifferenceInterval {
+  low: number
+  high: number
+}
+
 export interface ApiExperimentComparison {
   metric: string
   group: string
@@ -423,7 +429,9 @@ export interface ApiExperimentComparison {
   p_value: number | null
   significant: boolean
   method?: string
-  confidence_interval?: ApiBootstrapInterval | null
+  observed_difference?: number | null
+  confidence_interval?: ApiDifferenceInterval | null
+  confidence_interval_excludes_zero?: boolean
   user_level?: {
     candidate_mean: number | null
     baseline_mean: number | null
@@ -440,6 +448,12 @@ export interface ApiStatisticalAnalysis {
   planned_comparisons?: number
   unit?: string
   bootstrap_resamples?: number
+  /** Baseline precisa de impressões/usuários mínimos para liberar inferência. */
+  baseline_ready?: boolean
+  /** Grupos comparáveis contra o baseline (personalized/distance). */
+  comparison_groups?: string[]
+  /** Subconjunto de comparison_groups com volume mínimo para inferência. */
+  ready_comparison_groups?: string[]
   comparisons?: ApiExperimentComparison[]
   notes?: string[]
 }
@@ -519,6 +533,10 @@ export interface ApiExperimentResults {
   contaminated_users: number
   contamination_rate?: number
   contamination_detected: boolean
+  /** O baseline tem volume suficiente na coorte válida. */
+  baseline_ready?: boolean
+  /** Grupos que serão comparados contra o baseline. */
+  comparison_groups?: string[]
   valid_cohort?: {
     excluded_users: number
     contamination_rate: number
@@ -595,6 +613,77 @@ export interface ApiSplitStats {
   period: { start: string | null; end: string | null }
 }
 
+export interface ApiCalibrationBin {
+  bin_low: number
+  bin_high: number
+  count: number
+  mean_predicted: number
+  observed_rate: number
+}
+
+export interface ApiCalibrationCurve {
+  bins: ApiCalibrationBin[]
+  expected_calibration_error: number
+  max_calibration_error: number
+  samples: number
+}
+
+export interface ApiRankingSensitivityPool {
+  available: boolean
+  positives: number
+  negatives: number
+  reason: string | null
+  metrics: Record<string, ApiRankingMetrics>
+}
+
+export interface ApiRankingSensitivity {
+  primary: string
+  pools: Record<string, ApiRankingSensitivityPool>
+  note: string
+}
+
+export interface ApiTemporalPolicy {
+  user_history: string
+  static_restaurant_attributes: string[]
+  current_state_restaurant_features: string[]
+  risk: string
+  mitigation: string
+}
+
+export interface ApiRollingWindowStat {
+  mean: number
+  std: number
+  min?: number
+  max?: number
+}
+
+export interface ApiRollingWindowFold {
+  fold: number
+  available: boolean
+  reason?: string
+  train_contexts: number
+  validation_contexts: number
+  test_contexts: number
+  test_period?: { start: string | null; end: string | null }
+  ranking?: ApiRankingMetrics
+  baselines?: Record<string, ApiRankingMetrics>
+  predictive?: {
+    roc_auc: number | null
+    pr_auc: number | null
+    brier_score: number | null
+    log_loss: number | null
+  }
+}
+
+export interface ApiRollingWindowEvaluation {
+  available: boolean
+  windows?: number
+  folds?: ApiRollingWindowFold[]
+  summary?: Record<string, Record<string, ApiRollingWindowStat>>
+  reason?: string | null
+  note?: string
+}
+
 export interface ApiTrainingMetrics {
   available: boolean
   message?: string
@@ -623,6 +712,8 @@ export interface ApiTrainingMetrics {
     feature_count: number
   }
   features?: string[]
+  temporal_mode?: 'strict' | 'current_state_attributes' | string
+  feature_temporal_policy?: ApiTemporalPolicy
   params?: Record<string, unknown>
   seed?: number
   split?: {
@@ -645,12 +736,16 @@ export interface ApiTrainingMetrics {
     roc_auc_available: boolean
     roc_auc_note: string | null
     pr_auc?: number | null
+    pr_auc_note?: string | null
     brier_score?: number | null
     log_loss?: number | null
+    calibration?: ApiCalibrationCurve | null
+    predictive_notes?: Record<string, string>
     validation_roc_auc: number | null
     test_roc_auc: number | null
     evaluation_split: string
     ranking: ApiRankingMetrics
+    ranking_sensitivity?: ApiRankingSensitivity | null
   }
   baselines?: Record<string, ApiRankingMetrics>
   production?: {
@@ -660,6 +755,7 @@ export interface ApiTrainingMetrics {
     evaluation_split: string | null
     ranking: ApiRankingMetrics | null
   }
+  rolling_window?: ApiRollingWindowEvaluation
   comparison?: Record<string, number | null>
   quality?: {
     ok: boolean

@@ -8,8 +8,10 @@ relatório deve dizer isso explicitamente.
 
 > Estado: implementado para ranking, qualidade preditiva, coorte válida do A/B,
 > inferência por usuário, comparação com o modelo em produção, ILD, novidade,
-> Brier, Log Loss e PR AUC. Avaliação rolling-window e curva de calibração estão
-> especificadas, mas ainda **não implementadas**.
+> Brier, Log Loss, PR AUC, curva de calibração, avaliação rolling-window,
+> sensibilidade a negativos observados/não observados e política temporal
+> explícita. Atributos atuais do restaurante continuam com risco de vazamento
+> quando não há snapshots históricos; `--strict-temporal` remove esses atributos.
 
 ---
 
@@ -46,6 +48,18 @@ Ausência de pedido não é rejeição. O dataset distingue:
 O peso é usado **somente no treino** (`sample_weight`). As métricas de ranking
 continuam usando o catálogo inteiro e o rótulo binário; o relatório registra
 `observed_negatives`, `unobserved_negatives` e `negative_policy`.
+
+Como o catálogo inteiro é a avaliação principal, negativos não observados ainda
+entram como não relevantes. Para não esconder esse efeito, o relatório inclui
+`ranking_sensitivity` com dois pools diagnósticos:
+
+- `negativos_observados`: positivos + negativos com exposição observada;
+- `negativos_nao_observados`: positivos + negativos sem exposição.
+
+Cada pool só é calculado se houver ao menos um negativo do tipo; caso contrário
+é marcado `available = false` para evitar métrica trivial. A análise de
+sensibilidade **não substitui** a avaliação principal: restringir candidatos
+muda o objetivo da métrica.
 
 Limitação explícita: o peso `0.1` é uma escolha de engenharia, não um valor
 estimado por dados. Ele deve ser validado com dados de exposição reais.
@@ -186,9 +200,19 @@ usuário. O relatório inclui `confidence_intervals` com `unit = "user"`.
 
 ## 3. Dimensão 2 — Qualidade preditiva
 
-Reportadas apenas quando há amostras e as duas classes no conjunto de avaliação
-(`>= 20` amostras, `>= 5` positivos, `>= 5` negativos). Caso contrário, o valor é
-`None` com motivo em `roc_auc_note`.
+Cada métrica tem disponibilidade própria:
+
+| Métrica | Requisito |
+|---|---|
+| ROC AUC | `>= 20` amostras, `>= 5` positivos e `>= 5` negativos |
+| PR AUC | pelo menos um positivo e um negativo |
+| Brier Score | rótulos e probabilidades válidos (qualquer composição de classes) |
+| Log Loss | rótulos e probabilidades válidos (qualquer composição de classes) |
+| Calibração/ECE | rótulos e probabilidades válidos (qualquer composição de classes) |
+
+Quando uma métrica não pode ser calculada, ela é `None` e o motivo aparece em
+`roc_auc_note`, `pr_auc_note` ou `predictive_notes`. Brier, Log Loss e
+calibração **não** ficam condicionados à ROC AUC.
 
 ### 3.1 ROC AUC
 
@@ -219,11 +243,22 @@ $$
 
 Probabilidades são limitadas a `[1e-6, 1-1e-6]` para evitar log de zero.
 
-### 3.5 Curva de calibração (pendente)
+### 3.5 Curva de calibração e ECE
 
-Especificada como próximo passo: agrupar probabilidades em bins (por exemplo,
-10 bins) e comparar `p_médio` com `taxa_observada` por bin, com contagem por bin.
-Não implementada nesta versão.
+As probabilidades são agrupadas em 10 bins de largura fixa. Para cada bin:
+
+$$
+\text{erro}_{\text{bin}} =
+\bigl|\overline{p}_{\text{bin}} - \text{taxa observada}_{\text{bin}}\bigr|
+$$
+
+$$
+ECE = \sum_{\text{bins}} \frac{n_{\text{bin}}}{N}\,\text{erro}_{\text{bin}}
+$$
+
+O relatório também expõe `max_calibration_error`. A curva é diagnóstica: não
+substitui Brier/Log Loss e não autoriza promoção sozinha. O contrato inclui
+`calibration.bins` com contagem, probabilidade média e taxa observada por bin.
 
 ---
 
@@ -284,22 +319,39 @@ A comparação principal usa a **média por usuário** e bootstrap agrupado:
 2. calcular a diferença das médias;
 3. repetir `BOOTSTRAP_RESAMPLES = 1000` vezes;
 4. IC 95% pelos percentis 2,5% e 97,5%;
-5. p-valor bilateral aproximado pela distribuição bootstrap.
+5. construir uma **distribuição nula explícita** sob H0: centralizar as duas
+   amostras na média conjunta e reamostrar os grupos; o p-valor bilateral é a
+   proporção de diferenças nulas com magnitude maior ou igual à observada
+   (com correção de continuidade);
+6. reportar o método como `bootstrap_null_distribution_by_user`.
+
+A **evidência principal é o IC 95% da diferença**. Um resultado só é marcado
+como significante quando `p < alpha_corrigido` **e** o IC da diferença exclui
+zero. O p-valor não é a proporção de diferenças positivas da distribuição
+observada; ele vem da distribuição nula construída sob H0.
 
 Quando há menos de dois usuários válidos por grupo, o bootstrap não é
 identificável. Nesse caso, o relatório usa explicitamente o teste z por
-impressão como **fallback**, com a limitação registrada em `method`.
+impressão como **fallback**, sem IC bootstrap, com a limitação registrada em
+`method` (`z_test_by_impression_fallback`).
 
-### 4.5 Múltiplas comparações
+### 4.5 Múltiplas comparações e exigência de baseline
 
-Comparações planejadas: 2 métricas (`ctr`, `conversion_rate`) × 2 grupos
-(`personalized`, `distance`) contra `baseline` = **4 comparações**.
+A inferência é sempre contra o grupo `baseline`. **Sem baseline com impressões e
+usuários mínimos na coorte válida, a análise estatística permanece
+indisponível**, mesmo que dois grupos variantes tenham volume. O relatório
+expõe `baseline_ready` e `comparison_groups` (apenas grupos com impressões).
+
+Comparações planejadas: 2 métricas (`ctr`, `conversion_rate`) × cada grupo
+comparável (`personalized`, `distance`) contra `baseline`. Com os dois grupos,
+`m = 4`.
 
 $$
-\alpha_{\text{corrigido}} = \frac{\alpha}{m}, \qquad m = 4
+\alpha_{\text{corrigido}} = \frac{\alpha}{m}, \qquad m = 2 \times |comparison\_groups|
 $$
 
-Significância só é declarada quando `p < alpha_corrigido`.
+Significância só é declarada quando `p < alpha_corrigido` **e** o IC 95% da
+diferença exclui zero.
 
 ### 4.6 Lift
 
@@ -394,29 +446,54 @@ existe modelo em produção. A promoção exige `--source db`.
 
 ---
 
-## 7. Avaliação temporal com múltiplas janelas (especificada)
+## 7. Avaliação temporal com múltiplas janelas (implementada)
 
-Hoje o split é temporal único: treino → validação → teste. A quantidade de
-contextos importa mais do que a quantidade de linhas: 570 linhas podem ser
-apenas 30 contextos e 4 usuários.
+O split principal continua sendo temporal único: treino → validação → teste.
+Como a quantidade de contextos importa mais do que a quantidade de linhas
+(570 linhas podem ser apenas 30 contextos e 4 usuários), a avaliação
+walk-forward é opcional via `--rolling-window`.
 
-Especificação para a próxima versão:
+Implementação:
 
 1. ordenar contextos por `until`;
-2. definir janelas expansíveis (walk-forward): treinar em `[0, t]`, validar em
-   `(t, t+v]`, testar em `(t+v, t+v+s]`;
-3. deslizar a janela e repetir para pelo menos 3 períodos;
-4. reportar métricas por janela e a média/desvio entre janelas;
-5. reportar IC bootstrap por usuário dentro de cada janela;
+2. dividir os contextos em `windows + 1` blocos;
+3. em cada fold, treinar nos contextos anteriores, validar no bloco
+   imediatamente anterior ao teste e testar no bloco seguinte;
+4. reportar métricas por janela, além de média, desvio, mínimo e máximo entre
+   janelas;
+5. reportar métricas preditivas por janela quando disponíveis;
 6. não escolher hiperparâmetros na janela de teste;
-7. registrar no relatório quais janelas foram usadas e quantos contextos cada
-   uma tinha.
+7. registrar no relatório `folds`, `summary`, `windows` e o motivo quando a
+   avaliação não é possível.
+
+Requisitos: pelo menos 2 janelas e `(windows + 1) * 2` contextos. Caso
+contrário, `available = false` com motivo explícito.
 
 Critério de leitura: se o modelo só supera o baseline em uma janela, o resultado
 é **instável** e não autoriza promoção. A decisão final deve considerar a média
 e a pior janela, não apenas a melhor.
 
-Status: **não implementado**.
+---
+
+## 7.1 Política de vazamento temporal dos atributos do restaurante
+
+O histórico do usuário é estritamente anterior a `until`, mas quatro atributos
+do restaurante são lidos do estado atual da tabela:
+
+- `restaurant_rating`;
+- `restaurant_review_count`;
+- `restaurant_delivery_fee`;
+- `restaurant_delivery_time_avg`.
+
+Se esses valores mudaram depois do contexto avaliado, o modelo pode ver
+informação que não existia na época. O relatório expõe
+`feature_temporal_policy` com o risco e a mitigação. O modo
+`--strict-temporal` remove essas features do treino e da avaliação; o modo
+padrão as mantém e registra a limitação em `quality.limitations`.
+
+A solução definitiva é persistir snapshots históricos por versão/data do
+restaurante. Enquanto eles não existirem, nenhuma conclusão deve tratar os
+atributos atuais como se fossem históricos.
 
 ---
 
@@ -437,17 +514,26 @@ Status: **não implementado**.
 ### 8.2 Qualidade preditiva
 
 - probabilidades perfeitas → Brier e Log Loss próximos de zero;
-- uma única classe → ROC AUC, PR AUC, Brier e Log Loss `None`;
-- menos de 20 amostras → métricas `None` com motivo.
+- uma única classe → ROC AUC e PR AUC `None`; Brier, Log Loss e calibração
+  continuam disponíveis;
+- menos de 20 amostras → ROC AUC `None` com motivo;
+- PR AUC exige pelo menos um positivo e um negativo;
+- calibração reporta ECE e erro máximo por bin.
 
 ### 8.3 A/B
 
 - atribuição estável e sensível à versão;
 - três grupos cobertos;
 - `READY` não declara significância;
+- `baseline_ready` exige impressões e usuários mínimos no baseline;
+- `comparison_groups` lista apenas grupos comparáveis com impressões;
+- sem baseline, a análise estatística fica indisponível com motivo explícito;
 - Bonferroni usa o total de comparações planejadas;
 - usuários contaminados excluídos da coorte válida;
 - bootstrap por usuário usado quando há dados por usuário;
+- p-valor vem de distribuição nula construída sob H0;
+- evidência principal é o IC 95% da diferença; significância exige IC
+  excluindo zero e p < alpha corrigido;
 - fallback z por impressão só quando o bootstrap não é identificável;
 - eventos demo nunca entram no denominador oficial;
 - taxa de contaminação reportada.
@@ -455,9 +541,12 @@ Status: **não implementado**.
 ### 8.4 Integração
 
 - endpoint `/api/v1/experiment/ab-test` devolve `valid_groups`, `valid_cohort`,
-  `contamination_rate`, `statistical_analysis` e `plan`;
+  `contamination_rate`, `baseline_ready`, `comparison_groups`,
+  `statistical_analysis` e `plan`;
 - endpoint `/api/v1/ml/metrics` devolve `schema_version = 3`, alvo `purchased`,
-  métricas preditivas, ILD/novidade, `production` e comparação;
+  métricas preditivas, calibração, ILD/novidade, `ranking_sensitivity`,
+  `temporal_mode`, `feature_temporal_policy`, `rolling_window`, `production` e
+  comparação;
 - frontend renderiza as duas visões sem quebrar quando campos novos estão
   ausentes.
 
@@ -467,16 +556,17 @@ Status: **não implementado**.
 
 | Arquivo | Papel |
 |---|---|
-| `backend/app/ml/train.py` | alvo `purchased`, pesos de negativos, ranking, ILD, novidade, bootstrap, métricas preditivas, produção e promoção |
+| `backend/app/ml/train.py` | alvo `purchased`, pesos de negativos, ranking, ILD, novidade, bootstrap, métricas preditivas, calibração, sensibilidade, política temporal, rolling-window, produção e promoção |
+| `backend/app/ml/features.py` | features compartilhadas e política de atributos de estado atual do restaurante |
 | `backend/app/ml/lora_evaluation.py` | adaptação ao alvo `purchased` e às features canônicas |
-| `backend/app/services/experiment.py` | coorte válida, contaminação, inferência por usuário, Bonferroni, plano de amostra |
+| `backend/app/services/experiment.py` | coorte válida, contaminação, exigência de baseline, bootstrap nulo, Bonferroni, plano de amostra |
 | `backend/app/api/experiment.py` | endpoint A/B |
 | `backend/tests/test_ranking_metrics.py` | fórmulas, casos extremos, empates e cobertura |
-| `backend/tests/test_training.py` | pesos, métricas preditivas, bootstrap, ILD/novidade, produção e seed |
-| `backend/tests/test_experiment.py` | fases, ICs, Bonferroni, coorte válida, bootstrap e plano |
+| `backend/tests/test_training.py` | pesos, métricas preditivas, calibração, sensibilidade, rolling-window, política temporal, bootstrap, ILD/novidade, produção e seed |
+| `backend/tests/test_experiment.py` | fases, ICs, Bonferroni, coorte válida, exigência de baseline, bootstrap nulo e plano |
 | `frontend/src/lib/api.ts` | contrato TypeScript v3 |
-| `frontend/src/components/profile/ExperimentPanel.tsx` | painel A/B com coorte válida e plano |
-| `frontend/src/components/profile/TrainingMetricsPanel.tsx` | painel de treino com métricas preditivas e comparação |
+| `frontend/src/components/profile/ExperimentPanel.tsx` | painel A/B com coorte válida, baseline, IC como evidência principal e plano |
+| `frontend/src/components/profile/TrainingMetricsPanel.tsx` | painel de treino com métricas preditivas, calibração, sensibilidade, política temporal e rolling-window |
 
 Testes executados nesta versão:
 
@@ -493,23 +583,33 @@ não são copiados para este documento para evitar resultados desatualizados.
 
 ### 10.1 Seed (não é evidência de produção)
 
-A execução `--source seed` usa 4 usuários, 12 restaurantes e 30 pedidos. Ela
-serve para exercitar o pipeline, não para concluir superioridade. No seed não há
-interações registradas, então todos os 330 negativos são “não observados” e
-recebem peso `0.1`.
+A execução `--source seed` usa 4 usuários, 12 restaurantes e 30 contextos (360
+amostras, 30 positivos). Ela serve para exercitar o pipeline, não para concluir
+superioridade. No seed não há interações registradas, então todos os 330
+negativos são “não observados” e recebem peso `0.1`.
 
-Resultados da última execução de seed (schema 3):
+Resultados da última execução de seed com `--strict-temporal --rolling-window`
+(schema 3; 6 contextos de teste):
 
 | Estratégia | P@5 | R@5 | NDCG@5 | MAP@5 | ILD@5 | Novidade@5 |
 |---|---|---|---|---|---|---|
-| LightGBM | 0,1000 | 0,5000 | 0,4385 | 0,4167 | 0,8500 | 3,2847 |
+| LightGBM | 0,0333 | 0,1667 | 0,1667 | 0,1667 | 0,8667 | 3,6067 |
 | Popularidade | 0,1000 | 0,5000 | 0,4051 | 0,3750 | 0,8667 | 3,0846 |
 | Aleatório | 0,1333 | 0,6667 | 0,2798 | 0,1583 | 0,9500 | 3,5927 |
 | Produção (modelo anterior) | 0,0667 | 0,3333 | 0,1478 | 0,0889 | 0,9833 | 3,5740 |
 
-Métricas preditivas do LightGBM no teste de seed: ROC AUC `0,5758`, PR AUC
-`0,1968`, Brier `0,2446`, Log Loss `0,6824`. IC 95% bootstrap por usuário para
-NDCG@5: `[0,1429; 1,0000]` — largura que mostra a instabilidade com 4 usuários.
+Métricas preditivas do LightGBM no teste de seed: ROC AUC `0,3636`, PR AUC
+`0,1151`, Brier `0,2453`, Log Loss `0,6836`, ECE `0,4088` (erro máximo
+`0,4088`). IC 95% bootstrap por usuário para NDCG@5: `[0,0000; 0,4286]` —
+largura que mostra a instabilidade com 4 usuários.
+
+A análise de sensibilidade só pôde avaliar o pool de negativos não observados
+(não há negativos observados no seed); NDCG@5 nesse pool foi `0,1667`.
+
+A avaliação walk-forward gerou 3 janelas. NDCG@5 do LightGBM entre janelas:
+média `0,2410`, desvio `0,0930`, mínimo `0,1429`, máximo `0,3659`. A
+popularidade teve média `0,2648` e o aleatório `0,2596`; a instabilidade e a
+ausência de vantagem impedem qualquer conclusão de superioridade.
 
 Decisão: `kept_previous`. O seed não substitui o modelo em produção.
 
@@ -548,10 +648,14 @@ usuário contaminado; com isso, a inferência fica ainda mais limitada.
 - comparação com produção depende de features compatíveis;
 - Street View depende de chave/quota externa;
 - Overpass pública é intermitente;
-- rolling-window e curva de calibração ainda não implementadas;
+- atributos do restaurante (rating, avaliações, frete, tempo de entrega) não têm
+  snapshots históricos; `--strict-temporal` é mitigação, não solução;
 - modelo de clique e modelo de conversão separados ainda não implementados;
-- NDCG graduado ainda não implementado;
-- `feature_age`/`feature_coverage` ainda não implementados.
+- NDCG com ganho exponencial ainda não implementado (a versão atual usa ganho
+  linear);
+- `feature_age`/`feature_coverage` ainda não implementados;
+- rolling-window usa apenas métricas agregadas por janela, sem IC bootstrap
+  dentro de cada janela.
 
 ---
 
@@ -568,15 +672,25 @@ usuário contaminado; com isso, a inferência fica ainda mais limitada.
 7. ILD@K e Novelty@K;
 8. PR AUC, Brier Score e Log Loss;
 9. IC bootstrap por usuário nas métricas offline;
-10. seed nunca substitui produção.
+10. seed nunca substitui produção;
+11. exigência explícita de baseline com volume para liberar inferência;
+12. p-valor bootstrap por distribuição nula construída sob H0;
+13. IC 95% da diferença como evidência principal;
+14. análise de sensibilidade a negativos observados/não observados;
+15. disponibilidade independente de ROC AUC, PR AUC, Brier, Log Loss e
+    calibração;
+16. curva de calibração com ECE e erro máximo;
+17. avaliação rolling-window walk-forward;
+18. política temporal explícita para atributos do restaurante e modo
+    `--strict-temporal`.
 
 ### Pendente (próxima versão)
 
-1. avaliação rolling-window com múltiplas janelas;
-2. curva de calibração por bins;
-3. NDCG com ganho graduado;
-4. modelo de interesse/clique separado do modelo de compra;
-5. `feature_age` e `feature_coverage`;
+1. snapshots históricos dos atributos do restaurante;
+2. NDCG com ganho exponencial/graduado;
+3. modelo de interesse/clique separado do modelo de compra;
+4. `feature_age` e `feature_coverage`;
+5. IC bootstrap por usuário dentro de cada janela rolling-window;
 6. teste de hipótese com erro-padrão robusto agrupado como alternativa ao
    bootstrap.
 

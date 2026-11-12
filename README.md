@@ -309,7 +309,7 @@ para que o artefato sobreviva à recriação do container.
 | `GET` | `/api/v1/metrics/recommendations` | Métricas de cache hit rate e estratégia |
 | `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
 | `GET` | `/api/v1/experiment/ab-test` | Métricas dos 3 grupos a partir dos eventos no banco (Redis só como diagnóstico), com coorte válida, contaminação, IC bootstrap por usuário e plano de amostra |
-| `GET` | `/api/v1/ml/metrics` | Relatório v3 do último treino offline (split temporal, P@K/R@K/NDCG@K/MAP@K, ILD, novidade, PR AUC/Brier/Log Loss, baselines e comparação com produção) |
+| `GET` | `/api/v1/ml/metrics` | Relatório v3 do último treino offline (split temporal, P@K/R@K/NDCG@K/MAP@K, ILD, novidade, PR AUC/Brier/Log Loss, calibração, sensibilidade, política temporal, rolling-window, baselines e comparação com produção) |
 | `GET` | `/api/v1/street-view/metadata` | Disponibilidade do panorama nas coordenadas |
 | `GET` | `/api/v1/street-view/image` | Proxy da imagem do Street View (chave somente no backend) |
 | `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
@@ -384,8 +384,8 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 - **Interações**: `IMPRESSION`/`VIEW`/`VIEW_DETAILS`/`CLICK`/`FAVORITE`/`PURCHASE`/`DISMISS` com pesos, decaimento de recência e contexto A/B (grupo, posição e versão do modelo); afinidade reordena o ranking sem retreinar
 - **LoRA**: extensão experimental de re-ranking; carregada apenas com `ENABLE_LORA_RERANKER=true` e dependências de LLMOps instaladas. Sem adapter, usa fallback determinístico.
 - **Drift monitoring**: PSI (Population Stability Index) comparando treino vs. serving
-- **A/B test**: três grupos estáveis — `baseline` (popularidade), `personalized` (LightGBM + afinidade) e `distance`; métricas lidas dos eventos oficiais no banco, com fase explícita (`collecting`/`insufficient_data`/`ready`/`statistical_analysis`). `ready` é apenas volume mínimo descritivo; a inferência só ocorre em `statistical_analysis`, sobre a **coorte válida** (usuários contaminados excluídos), com **bootstrap agrupado por usuário**, intervalo de confiança e correção de Bonferroni. O teste z por impressão é apenas fallback explícito. Modo `demo` fica fora das métricas oficiais.
-- **Métricas de treino (schema v3)**: alvo `purchased`, negativos observados × não observados, split temporal por contexto, P@K, R@K, NDCG@K, MAP@K, ILD@K, novidade, cobertura de catálogo/usuários, IC bootstrap por usuário, ROC AUC/PR AUC/Brier/Log Loss, baselines com os mesmos candidatos, comparação com o modelo em produção, hash do dataset e decisão de promoção/rollback em `GET /api/v1/ml/metrics`
+- **A/B test**: três grupos estáveis — `baseline` (popularidade), `personalized` (LightGBM + afinidade) e `distance`; métricas lidas dos eventos oficiais no banco, com fase explícita (`collecting`/`insufficient_data`/`ready`/`statistical_analysis`). `ready` é apenas volume mínimo descritivo; a inferência só ocorre em `statistical_analysis`, sobre a **coorte válida** (usuários contaminados excluídos), com **bootstrap agrupado por usuário**, intervalo de confiança e correção de Bonferroni. O `baseline` precisa de volume mínimo; sem ele a inferência fica bloqueada. O p-valor vem de distribuição nula sob H0 e a evidência principal é o IC 95% da diferença. O teste z por impressão é apenas fallback explícito. Modo `demo` fica fora das métricas oficiais.
+- **Métricas de treino (schema v3)**: alvo `purchased`, negativos observados × não observados, split temporal por contexto, P@K, R@K, NDCG@K, MAP@K, ILD@K, novidade, cobertura de catálogo/usuários, IC bootstrap por usuário, ROC AUC/PR AUC/Brier/Log Loss, calibração (ECE), sensibilidade a negativos observados/não observados, política temporal das features, rolling-window opcional, baselines com os mesmos candidatos, comparação com o modelo em produção, hash do dataset e decisão de promoção/rollback em `GET /api/v1/ml/metrics`
 - **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
 
 ### Avaliação e métricas (v2/v3)
@@ -398,8 +398,14 @@ Pontos centrais:
   reduzido apenas no treino;
 - métricas de ranking por contexto com macro-média, IC bootstrap por usuário,
   ILD e novidade;
-- ROC AUC, PR AUC, Brier e Log Loss condicionais a amostras e duas classes;
-- A/B com coorte válida, inferência por usuário e plano de amostra;
+- ROC AUC, PR AUC, Brier, Log Loss e calibração com disponibilidade própria;
+- sensibilidade a negativos observados/não observados, sem substituir a
+  avaliação principal do catálogo inteiro;
+- A/B com coorte válida, baseline obrigatório, inferência por usuário e plano
+  de amostra;
+- atributos atuais do restaurante documentados como risco de vazamento
+  temporal; `--strict-temporal` os exclui;
+- avaliação rolling-window walk-forward opcional (`--rolling-window`);
 - comparação do candidato com o modelo em produção nos mesmos contextos;
 - treino `--source seed` é apenas avaliação e **nunca** substitui o modelo em
   produção.

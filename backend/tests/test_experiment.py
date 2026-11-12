@@ -300,8 +300,9 @@ def test_inference_uses_bootstrap_by_user_when_user_rows_exist() -> None:
         for item in analysis["comparisons"]
         if item["group"] == EXPERIMENT_PERSONALIZED and item["metric"] == "ctr"
     )
-    assert comparison["method"] == "bootstrap_by_user"
+    assert comparison["method"] == "bootstrap_null_distribution_by_user"
     assert comparison["confidence_interval"] is not None
+    assert comparison["confidence_interval_excludes_zero"] is True
     assert comparison["user_level"]["candidate_mean"] == 0.4
     assert comparison["user_level"]["baseline_mean"] == 0.1
 
@@ -349,3 +350,29 @@ def test_sample_size_plan_uses_valid_baseline_rate() -> None:
     assert conversion["required_users_per_group"] is not None
     assert conversion["required_users_per_group"] > 0
     assert conversion["required_impressions_per_group"] is not None
+
+def test_statistical_analysis_requires_baseline_group() -> None:
+    rows = [
+        (EXPERIMENT_PERSONALIZED, "IMPRESSION", 200),
+        (EXPERIMENT_PERSONALIZED, "CLICK", 60),
+        (EXPERIMENT_PERSONALIZED, "PURCHASE", 20),
+        (EXPERIMENT_DISTANCE, "IMPRESSION", 200),
+        (EXPERIMENT_DISTANCE, "CLICK", 20),
+        (EXPERIMENT_DISTANCE, "PURCHASE", 10),
+    ]
+    user_rows = [
+        (EXPERIMENT_PERSONALIZED, 25),
+        (EXPERIMENT_DISTANCE, 25),
+    ]
+
+    summary = summarize_experiment(rows, user_rows)
+
+    assert summary["baseline_ready"] is False
+    assert summary["comparison_groups"] == [
+        EXPERIMENT_PERSONALIZED,
+        EXPERIMENT_DISTANCE,
+    ]
+    assert summary["statistical_analysis"]["available"] is False
+    assert summary["statistical_analysis"]["baseline_ready"] is False
+    assert "baseline" in summary["statistical_analysis"]["reason"].lower()
+    assert summary["comparison"]["winner_declared"] is False

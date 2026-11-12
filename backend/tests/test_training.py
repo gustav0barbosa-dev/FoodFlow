@@ -1,20 +1,26 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pandas as pd
 import pytest
 
 from app.core.constants import APP_TIMEZONE
 from app.ml import recommender as recommender_module
 from app.ml import train as train_module
-from app.ml.features import build_user_features
+from app.ml.features import (
+    CURRENT_STATE_RESTAURANT_FEATURES,
+    build_user_features,
+)
 from app.ml.recommender import Recommender
 from app.ml.train import (
     InsufficientTrainingDataError,
     UNOBSERVED_NEGATIVE_WEIGHT,
+    _calibration_curve,
     _dataset_hash,
     _fit_and_evaluate,
     _predictive_metrics,
     _promotion_decision,
+    _ranking_sensitivity,
     _roc_auc,
     _split_frame,
     build_contexts,
@@ -22,6 +28,7 @@ from app.ml.train import (
     build_training_frame,
     compute_ranking_metrics,
     feature_columns,
+    rolling_window_evaluation,
     train_from_seed,
 )
 from app.models import Order, Restaurant, User, UserRestaurantInteraction
@@ -382,13 +389,110 @@ def test_predictive_metrics_include_calibration() -> None:
     assert metrics["log_loss"] is not None and metrics["log_loss"] < 0.2
 
 
-def test_predictive_metrics_are_none_without_two_classes() -> None:
+def test_predictive_metrics_keep_calibration_without_two_classes() -> None:
     metrics = _predictive_metrics([1] * 30, [0.5] * 30)
 
+    # ROC/PR AUC exigem as duas classes; Brier, Log Loss e calibração não.
     assert metrics["roc_auc"] is None
     assert metrics["pr_auc"] is None
-    assert metrics["brier_score"] is None
-    assert metrics["log_loss"] is None
+    assert metrics["brier_score"] == pytest.approx(0.25, abs=1e-6)
+    assert metrics["log_loss"] == pytest.approx(0.6931, abs=1e-3)
+    assert metrics["calibration"] is not None
+    assert metrics["calibration"]["samples"] == 30
+
+
+def test_calibration_curve_reports_ece_and_bins() -> None:
+    labels = [0, 1] * 15
+    scores = [0.1, 0.9] * 15
+
+    calibration = _calibration_curve(labels, scores)
+
+    assert calibration is not None
+    assert calibration["samples"] == 30
+    # Previsões bem separadas -> erro pequeno em cada bin.
+    assert calibration["expected_calibration_error"] <= 0.1
+    assert len(calibration["bins"]) >= 2
+    for entry in calibration["bins"]:
+        assert 0.0 <= entry["observed_rate"] <= 1.0
+
+
+def test_ranking_sensitivity_separates_observed_and_unobserved() -> None:
+    frame = pd.DataFrame(
+        {
+            "_context_id": ["c1"] * 4,
+            "_user_id": ["u1"] * 4,
+            "_restaurant_id": ["r1", "r2", "r3", "r4"],
+            "purchased": [1, 0, 0, 0],
+            "_observed": [True, True, False, False],
+        }
+    )
+    scores = [0.9, 0.5, 0.4, 0.1]
+
+    sensitivity = _ranking_sensitivity(
+        frame,
+        scores,
+        orders=None,
+        catalog_size=4,
+        item_attributes=None,
+    )
+
+    assert sensitivity["primary"] == "all_candidates"
+    observed = sensitivity["pools"]["negativos_observados"]
+    unobserved = sensitivity["pools"]["negativos_nao_observados"]
+    assert observed["available"] is True
+    assert observed["positives"] == 1
+    assert observed["negatives"] == 1
+    assert unobserved["available"] is True
+    assert unobserved["negatives"] == 2
+    assert "model" in observed["metrics"]
+
+
+def test_ranking_sensitivity_marks_pool_unavailable_without_negatives() -> None:
+    frame = pd.DataFrame(
+        {
+            "_context_id": ["c1"] * 2,
+            "_user_id": ["u1"] * 2,
+            "_restaurant_id": ["r1", "r2"],
+            "purchased": [1, 0],
+            "_observed": [True, False],
+        }
+    )
+
+    sensitivity = _ranking_sensitivity(
+        frame,
+        [0.9, 0.1],
+        orders=None,
+        catalog_size=2,
+        item_attributes=None,
+    )
+
+    observed = sensitivity["pools"]["negativos_observados"]
+    assert observed["available"] is False
+    assert "trivial" in observed["reason"].lower()
+
+
+def test_rolling_window_evaluation_reports_unavailable_with_few_contexts() -> None:
+    users, orders, restaurants = build_fixture()
+    frame = build_training_frame(users, orders, restaurants, seed=7)
+
+    result = rolling_window_evaluation(frame, orders=orders, restaurants=restaurants)
+
+    # O fixture tem poucos contextos; a análise deve recusar sem inventar folds.
+    assert result["available"] is False
+    assert "insuficientes" in result["reason"].lower() or "nenhum" in result[
+        "reason"
+    ].lower()
+
+
+def test_strict_temporal_excludes_current_state_features() -> None:
+    users, orders, restaurants = build_fixture()
+    frame = build_training_frame(users, orders, restaurants, seed=7)
+
+    _, metrics = _fit_and_evaluate(frame, strict_temporal=True)
+
+    assert metrics["temporal_mode"] == "strict"
+    for feature in CURRENT_STATE_RESTAURANT_FEATURES:
+        assert feature not in metrics["feature_names"]
 
 
 def test_ranking_bootstrap_interval_is_reproducible_by_user() -> None:

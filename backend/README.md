@@ -36,7 +36,7 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
 | `PUT` | `/api/v1/reviews/{id}` | Atualiza avaliação do próprio usuário |
 | `DELETE` | `/api/v1/reviews/{id}` | Remove avaliação do próprio usuário |
 | `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&mode=&experiment=` | Ranking personalizado (Redis → LightGBM → popularidade). `mode=experiment` usa atribuição persistente; `mode=demo` aceita `experiment=baseline\|personalized\|distance` |
-| `GET` | `/api/v1/experiment/ab-test` | Resultados do A/B com fases, coorte válida, contaminação, IC bootstrap por usuário, Bonferroni e plano de amostra (Redis apenas como diagnóstico) |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados do A/B com fases, coorte válida, contaminação, exigência de baseline, IC bootstrap por usuário, p-valor sob H0, Bonferroni e plano de amostra (Redis apenas como diagnóstico) |
 | `POST` | `/api/v1/recommendations/train` | Retorna `202`; o treino do LightGBM é offline (`python -m app.ml.train`) |
 | `POST` | `/api/v1/recommendations/train-lora` | Retorna `202`; treino LoRA é offline |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa o re-ranking sobre scores em cache |
@@ -213,16 +213,29 @@ python -m app.ml.train --source db    # usa os pedidos do PostgreSQL
 python -m app.ml.train --source seed  # seed determinístico, sem PostGIS
 ```
 
+Flags opcionais:
+
+```bash
+python -m app.ml.train --source seed --strict-temporal --rolling-window
+```
+
+- `--strict-temporal`: exclui do treino/avaliação os atributos do restaurante
+  lidos do estado atual (rating, nº de avaliações, frete e tempo de entrega),
+  reduzindo risco de vazamento temporal.
+- `--rolling-window`: adiciona avaliação walk-forward com múltiplas janelas
+  expansíveis.
+
 O artefato é salvo em `models/recommender.joblib` com metadados JSON (versão,
 data, features e parâmetros). O relatório completo do treino é gravado em
 `models/training_metrics.json` (**schema v3**) e exposto em
 `GET /api/v1/ml/metrics`: alvo `purchased`, política de negativos, split
 temporal, Precision@K, Recall@K, NDCG@K, MAP@K, ILD@K, novidade, cobertura,
-ROC AUC/PR AUC/Brier/Log Loss, IC bootstrap por usuário, baselines de
-popularidade/aleatório e comparação com o modelo em produção. Se o modelo não
-existir ou não carregar, a API usa o fallback por popularidade. Treine no mesmo
-ambiente da API: artefatos gerados com NumPy 2.x não carregam em ambientes com
-NumPy 1.26 (`numpy._core`).
+ROC AUC/PR AUC/Brier/Log Loss, calibração com ECE, IC bootstrap por usuário,
+sensibilidade a negativos observados/não observados, política temporal das
+features, rolling-window opcional, baselines de popularidade/aleatório e
+comparação com o modelo em produção. Se o modelo não existir ou não carregar, a
+API usa o fallback por popularidade. Treine no mesmo ambiente da API: artefatos
+gerados com NumPy 2.x não carregam em ambientes com NumPy 1.26 (`numpy._core`).
 
 A promoção exige superar `max(melhor baseline, modelo em produção)` por uma
 margem mínima em NDCG@K ou MAP@K, sem degradação relevante na outra métrica.
@@ -344,7 +357,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic (revisões `0001` a `0004`), métricas de ranking (P@K, R@K, NDCG, MAP, cobertura, ILD, novidade), split temporal por contexto, alvo `purchased`, pesos de negativos observados/não observados, métricas preditivas (ROC AUC, PR AUC, Brier, Log Loss), IC bootstrap por usuário, comparação com produção, promoção/rollback, readiness, round-trip do modelo, query PostGIS, persistência/detalhe de restaurantes OSM, ingestão por bbox, Street View (metadata/proxy e erros), interações e perfil de preferências, atribuição e métricas do experimento A/B (fases, coorte válida, bootstrap por usuário, fallback z, Bonferroni, plano de amostra, contaminação e modo demo), validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic (revisões `0001` a `0004`), métricas de ranking (P@K, R@K, NDCG, MAP, cobertura, ILD, novidade), split temporal por contexto, alvo `purchased`, pesos de negativos observados/não observados, métricas preditivas (ROC AUC, PR AUC, Brier, Log Loss) com disponibilidade independente, calibração (ECE), sensibilidade a negativos observados/não observados, política temporal e modo `--strict-temporal`, rolling-window, IC bootstrap por usuário, comparação com produção, promoção/rollback, readiness, round-trip do modelo, query PostGIS, persistência/detalhe de restaurantes OSM, ingestão por bbox, Street View (metadata/proxy e erros), interações e perfil de preferências, atribuição e métricas do experimento A/B (fases, coorte válida, exigência de baseline, bootstrap nulo sob H0, fallback z, Bonferroni, plano de amostra, contaminação e modo demo), validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 

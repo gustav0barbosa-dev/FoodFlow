@@ -276,6 +276,180 @@ export function TrainingMetricsPanel() {
             </p>
           )}
 
+          {report.metrics?.calibration && (
+            <p className="text-[10px] text-ink-soft">
+              Calibração (
+              {report.metrics.calibration.bins.length} bins ·{' '}
+              {report.metrics.calibration.samples} amostras): ECE{' '}
+              {metric(report.metrics.calibration.expected_calibration_error)} ·
+              erro máximo{' '}
+              {metric(report.metrics.calibration.max_calibration_error)}
+              {report.metrics.pr_auc_note
+                ? ` · ${report.metrics.pr_auc_note}`
+                : ''}
+            </p>
+          )}
+
+          <div className="rounded-xl border border-gray-100 p-3">
+            <h3 className="text-xs font-semibold text-ink mb-1">
+              Validação temporal
+            </h3>
+            <p className="text-[11px] text-ink-soft">
+              Modo:{' '}
+              {report.temporal_mode === 'strict'
+                ? 'estrito — atributos atuais do restaurante excluídos'
+                : 'atributos atuais do restaurante incluídos'}
+              .
+            </p>
+            {report.feature_temporal_policy && (
+              <>
+                <p className="mt-1 text-[10px] text-amber-700">
+                  {report.feature_temporal_policy.risk}
+                </p>
+                <p className="mt-0.5 text-[10px] text-ink-soft">
+                  Mitigação: {report.feature_temporal_policy.mitigation}
+                </p>
+                {report.feature_temporal_policy
+                  .current_state_restaurant_features.length > 0 && (
+                  <p className="mt-0.5 text-[10px] text-ink-soft">
+                    Features de estado atual:{' '}
+                    {report.feature_temporal_policy.current_state_restaurant_features.join(
+                      ', '
+                    )}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          {report.metrics?.ranking_sensitivity && (
+            <div className="rounded-xl border border-gray-100 p-3">
+              <h3 className="text-xs font-semibold text-ink mb-1">
+                Sensibilidade a negativos observados/não observados
+              </h3>
+              <p className="text-[10px] text-ink-soft mb-2">
+                {report.metrics.ranking_sensitivity.note}
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {Object.entries(report.metrics.ranking_sensitivity.pools).map(
+                  ([pool, values]) => (
+                    <div
+                      key={pool}
+                      className="bg-surface-muted rounded-xl p-2 border border-gray-100"
+                    >
+                      <p className="text-[11px] font-medium text-ink capitalize">
+                        {pool.replace(/_/g, ' ')}
+                      </p>
+                      {values.available && values.metrics.model ? (
+                        <>
+                          <p className="mt-1 text-[10px] text-ink-soft">
+                            P@K {metric(values.metrics.model.precision_at_k)} ·
+                            NDCG@K {metric(values.metrics.model.ndcg_at_k)} ·
+                            MAP@K {metric(values.metrics.model.map_at_k)}
+                          </p>
+                          <p className="text-[10px] text-ink-soft">
+                            {values.positives} positivos · {values.negatives}{' '}
+                            negativos
+                          </p>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-[10px] text-amber-700">
+                          {values.reason ?? 'Indisponível.'}
+                        </p>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+
+          {report.rolling_window && (
+            <div className="rounded-xl border border-gray-100 p-3">
+              <h3 className="text-xs font-semibold text-ink mb-1">
+                Janelas temporais (walk-forward)
+              </h3>
+              {report.rolling_window.available ? (
+                <>
+                  <p className="text-[10px] text-ink-soft mb-2">
+                    {report.rolling_window.windows ?? 0} janelas expansíveis.
+                    A média entre janelas não substitui a pior janela; janelas
+                    instáveis bloqueiam promoção.
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[11px]">
+                      <thead>
+                        <tr className="text-ink-soft">
+                          <th className="py-1 pr-2 font-medium">Janela</th>
+                          <th className="py-1 pr-2 font-medium">Treino</th>
+                          <th className="py-1 pr-2 font-medium">Teste</th>
+                          <th className="py-1 pr-2 font-medium">NDCG@K</th>
+                          <th className="py-1 pr-2 font-medium">MAP@K</th>
+                          <th className="py-1 font-medium">ROC AUC</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-ink">
+                        {(report.rolling_window.folds ?? []).map((fold) => (
+                          <tr
+                            key={fold.fold}
+                            className="border-t border-gray-100"
+                          >
+                            <td className="py-1 pr-2">{fold.fold}</td>
+                            <td className="py-1 pr-2">
+                              {fold.train_contexts}
+                            </td>
+                            <td className="py-1 pr-2">{fold.test_contexts}</td>
+                            <td className="py-1 pr-2">
+                              {fold.available
+                                ? metric(fold.ranking?.ndcg_at_k)
+                                : '—'}
+                            </td>
+                            <td className="py-1 pr-2">
+                              {fold.available
+                                ? metric(fold.ranking?.map_at_k)
+                                : '—'}
+                            </td>
+                            <td className="py-1">
+                              {fold.available
+                                ? metric(fold.predictive?.roc_auc)
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {report.rolling_window.summary?.lightgbm && (
+                    <p className="mt-1 text-[10px] text-ink-soft">
+                      NDCG@K entre janelas:{' '}
+                      {metric(
+                        report.rolling_window.summary.lightgbm.ndcg_at_k?.mean
+                      )}{' '}
+                      ±{' '}
+                      {metric(
+                        report.rolling_window.summary.lightgbm.ndcg_at_k?.std
+                      )}{' '}
+                      (min{' '}
+                      {metric(
+                        report.rolling_window.summary.lightgbm.ndcg_at_k?.min
+                      )}
+                      , max{' '}
+                      {metric(
+                        report.rolling_window.summary.lightgbm.ndcg_at_k?.max
+                      )}
+                      )
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-[10px] text-amber-700">
+                  {report.rolling_window.reason ??
+                    'Avaliação por janelas indisponível.'}
+                </p>
+              )}
+            </div>
+          )}
+
           {report.production && !report.production.available && (
             <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
               Modelo em produção não comparável no mesmo teste:{' '}

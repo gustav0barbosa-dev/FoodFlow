@@ -49,6 +49,52 @@ INTERACTION_TYPES: tuple[str, ...] = tuple(INTERACTION_WEIGHTS)
 # afinidade só reordena o que o comportamento recente indica como relevante.
 AFFINITY_ALPHA = 0.3
 
+# Atributos do restaurante lidos do estado atual da tabela. Eles são úteis,
+# mas não têm snapshot histórico: se rating, contagem de avaliações, frete ou
+# tempo de entrega mudaram depois do contexto avaliado, o treino pode ver
+# informação que não existia em ``until``. O relatório expõe essa política e o
+# treino aceita ``strict_temporal`` para excluí-los.
+CURRENT_STATE_RESTAURANT_FEATURES: tuple[str, ...] = (
+    "restaurant_rating",
+    "restaurant_review_count",
+    "restaurant_delivery_fee",
+    "restaurant_delivery_time_avg",
+)
+
+STATIC_RESTAURANT_ATTRIBUTES: tuple[str, ...] = (
+    "restaurant_id",
+    "restaurant_categories",
+    "restaurant_cuisine",
+)
+
+
+def feature_temporal_policy() -> dict[str, Any]:
+    """Descreve quais atributos têm risco de vazamento temporal.
+
+    O histórico do usuário é estritamente anterior a ``until``. Já os
+    atributos do restaurante vêm do estado atual do objeto ``Restaurant``. Sem
+    uma tabela de snapshots, não é possível afirmar que rating/frete/tempo de
+    entrega eram os mesmos no passado. O modo ``strict_temporal`` remove essas
+    features do modelo; o modo padrão as mantém e registra a limitação.
+    """
+    return {
+        "user_history": "strictly_before_until",
+        "static_restaurant_attributes": list(STATIC_RESTAURANT_ATTRIBUTES),
+        "current_state_restaurant_features": list(
+            CURRENT_STATE_RESTAURANT_FEATURES
+        ),
+        "risk": (
+            "Atributos do restaurante são lidos do estado atual; mudanças "
+            "posteriores ao contexto podem vazar informação. Não há snapshots "
+            "históricos implementados."
+        ),
+        "mitigation": (
+            "Use strict_temporal=True/--strict-temporal para excluir essas "
+            "features da avaliação. A solução definitiva é persistir snapshots "
+            "por versão/data do restaurante."
+        ),
+    }
+
 
 def turno_da_hora(hora: int) -> Turno:
     for turno, (inicio, fim) in TURNO_MAP.items():
