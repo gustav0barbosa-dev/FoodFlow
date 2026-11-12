@@ -102,6 +102,42 @@ describe('catalog mappers', () => {
     expect(detail.reviews[0].rating).toBe(5)
   })
 
+  it('não enriquece restaurantes do OSM com dados do catálogo mock', () => {
+    const restaurant = mapApiRestaurant({
+      ...apiRestaurant,
+      id: 'osm-uuid',
+      name: 'Sabor da Vila',
+      source: 'osm',
+      osm_type: 'node',
+      osm_id: 123,
+      latitude: -23.5,
+      longitude: -46.6,
+      cuisine: 'italian',
+      website: null,
+      opening_hours: null,
+      osm_url: 'https://www.openstreetmap.org/node/123',
+      categories: ['restaurant'],
+      address: '',
+      phone: null,
+      average_rating: 0,
+      review_count: 0,
+      delivery_fee: 0,
+      image_url: null,
+    })
+
+    expect(restaurant.source).toBe('osm')
+    expect(restaurant.category).toBe('Restaurante')
+    expect(restaurant.cuisine).toBe('italian')
+    expect(restaurant.osmType).toBe('node')
+    expect(restaurant.osmId).toBe(123)
+    expect(restaurant.image).toBe('')
+    expect(restaurant.menu).toEqual([])
+    expect(restaurant.reviews).toEqual([])
+    expect(restaurant.paymentMethods).toEqual([])
+    expect(restaurant.tags).toEqual([])
+    expect(restaurant.address).toBe('')
+  })
+
   it('constrói mapa de IDs legados para UUIDs da API', () => {
     const apiRestaurants: ApiRestaurant[] = [
       { ...apiRestaurant, name: 'Sabor da Vila', id: 'uuid-sabor' },

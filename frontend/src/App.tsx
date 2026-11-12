@@ -86,6 +86,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/restaurante/osm/:osmType/:osmId"
+                element={
+                  <PrivateRoute>
+                    <RestaurantDetail />
+                  </PrivateRoute>
+                }
+              />
+              <Route
                 path="/sacola"
                 element={
                   <PrivateRoute>

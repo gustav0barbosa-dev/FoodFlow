@@ -6,7 +6,8 @@ import type {
   ApiRestaurantDetail,
   ApiReview,
 } from '@/lib/api'
-import type { Restaurant, Review } from '@/types'
+import { categoryLabel } from '@/lib/osm'
+import type { Restaurant, RestaurantSource, Review } from '@/types'
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&h=400&fit=crop'
@@ -14,6 +15,18 @@ const FALLBACK_IMAGE =
 const mockByName = new Map(
   mockRestaurants.map((restaurant) => [restaurant.name, restaurant])
 )
+
+function osmTypeOf(
+  value: string | null | undefined
+): Restaurant['osmType'] {
+  return value === 'node' || value === 'way' || value === 'relation'
+    ? value
+    : undefined
+}
+
+function sourceOf(value: string | null | undefined): RestaurantSource {
+  return value === 'osm' ? 'osm' : 'foodflow'
+}
 
 export function formatReviewDate(value: string): string {
   const date = new Date(value)
@@ -41,6 +54,43 @@ export function mapApiRestaurant(
   restaurant: ApiRestaurant,
   isRecommended = false
 ): Restaurant {
+  const source = sourceOf(restaurant.source)
+
+  // Restaurantes do OSM não são enriquecidos com dados do catálogo mock:
+  // cardápio, avaliações, taxa e tempo de entrega simplesmente não existem.
+  if (source === 'osm') {
+    return {
+      id: restaurant.id,
+      name: restaurant.name,
+      category: categoryLabel(restaurant.categories[0] ?? null),
+      image: '',
+      rating: restaurant.average_rating,
+      reviewCount: restaurant.review_count,
+      distanceKm: restaurant.distance_km ?? 0,
+      deliveryFee: restaurant.delivery_fee,
+      deliveryTimeMin: restaurant.delivery_time_min,
+      deliveryTimeMax: restaurant.delivery_time_max,
+      address: restaurant.address ?? '',
+      phone: restaurant.phone ?? '',
+      tags: [],
+      dietaryTags: [],
+      isRecommended,
+      menu: [],
+      reviews: [],
+      hours: restaurant.opening_hours ?? '',
+      paymentMethods: [],
+      source,
+      osmType: osmTypeOf(restaurant.osm_type),
+      osmId: restaurant.osm_id ?? undefined,
+      latitude: restaurant.latitude ?? undefined,
+      longitude: restaurant.longitude ?? undefined,
+      cuisine: restaurant.cuisine ?? undefined,
+      website: restaurant.website ?? undefined,
+      openingHours: restaurant.opening_hours ?? undefined,
+      osmUrl: restaurant.osm_url ?? undefined,
+    }
+  }
+
   const mock = mockByName.get(restaurant.name)
 
   return {
@@ -63,6 +113,7 @@ export function mapApiRestaurant(
     reviews: [],
     hours: mock?.hours ?? 'Consulte o restaurante',
     paymentMethods: mock?.paymentMethods ?? ['Cartão', 'Pix', 'Dinheiro'],
+    source,
   }
 }
 

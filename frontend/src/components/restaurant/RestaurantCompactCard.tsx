@@ -2,6 +2,8 @@ import { Star, MapPin, Bike } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
 import { useEventsStore } from '@/store/eventsStore'
+import { useCatalogStore } from '@/store/catalogStore'
+import { trackInteraction } from '@/lib/interactions'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { getMatchingMenuItems, matchesQuery } from '@/lib/search'
@@ -17,6 +19,9 @@ export function RestaurantCompactCard({
   query?: string
 }) {
   const trackEvent = useEventsStore((s) => s.trackEvent)
+  const recommendationContext = useCatalogStore(
+    (s) => s.recommendationContext
+  )
   const matchingItems = getMatchingMenuItems(restaurant, query)
 
   const handleClick = () => {
@@ -24,6 +29,15 @@ export function RestaurantCompactCard({
       restaurantId: restaurant.id,
       restaurantName: restaurant.name,
       source,
+    })
+    trackInteraction(restaurant.id, 'CLICK', {
+      experimentGroup: recommendationContext?.experimentGroup,
+      experimentMode: recommendationContext?.experimentMode,
+      experimentVersion: recommendationContext?.experimentVersion,
+      recommendationId: recommendationContext?.recommendationId,
+      recommendationPosition: recommendationContext?.positions[restaurant.id],
+      modelVersion: recommendationContext?.modelVersion,
+      metadata: { source },
     })
   }
 

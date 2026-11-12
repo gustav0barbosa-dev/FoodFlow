@@ -4,9 +4,26 @@ import { searchRestaurants } from '@/lib/api'
 import { buildLegacyIdMap, mapApiRestaurant } from '@/lib/catalog'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { useLocationStore } from '@/store/locationStore'
+import type { ExperimentMode } from '@/lib/config'
 import type { Restaurant } from '@/types'
 
 export type CatalogSource = 'api' | 'mock'
+
+/**
+ * Contexto da última chamada de recomendações. Guarda o grupo do experimento,
+ * o modo, a versão do experimento/modelo, o identificador da exposição e a
+ * posição de cada restaurante no ranking. Sem esses campos, um clique não pode
+ * ser atribuído à exposição que o originou.
+ */
+export interface RecommendationContext {
+  experimentGroup: string
+  experimentMode: ExperimentMode
+  experimentVersion: string
+  recommendationId: string
+  modelVersion: string
+  strategy: string
+  positions: Record<string, number>
+}
 
 interface CatalogState {
   restaurants: Restaurant[]
@@ -15,8 +32,10 @@ interface CatalogState {
   loaded: boolean
   error: string | null
   recommendedIds: string[]
+  recommendationContext: RecommendationContext | null
   load: (force?: boolean) => Promise<void>
   setRecommendedIds: (ids: string[]) => void
+  setRecommendationContext: (context: RecommendationContext | null) => void
 }
 
 let inFlight: Promise<void> | null = null
@@ -28,6 +47,7 @@ export const useCatalogStore = create<CatalogState>()((set, get) => ({
   loaded: false,
   error: null,
   recommendedIds: [],
+  recommendationContext: null,
 
   load: async (force = false) => {
     if (inFlight) return inFlight
@@ -69,6 +89,8 @@ export const useCatalogStore = create<CatalogState>()((set, get) => ({
   },
 
   setRecommendedIds: (ids) => set({ recommendedIds: ids }),
+  setRecommendationContext: (context) =>
+    set({ recommendationContext: context }),
 }))
 
 export function resetCatalogStore() {
@@ -79,5 +101,6 @@ export function resetCatalogStore() {
     loaded: false,
     error: null,
     recommendedIds: [],
+    recommendationContext: null,
   })
 }

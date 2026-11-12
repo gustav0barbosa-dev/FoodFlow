@@ -1,10 +1,11 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed, CreditCard } from 'lucide-react'
+import { ChevronLeft, Star, MapPin, Phone, Bike, Clock, ExternalLink, UtensilsCrossed, CreditCard, Globe } from 'lucide-react'
 import { MenuItem } from '@/components/restaurant/MenuItem'
 import { ReviewCard } from '@/components/restaurant/ReviewCard'
 import { UserReviewForm } from '@/components/restaurant/UserReviewForm'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
+import { StreetView } from '@/components/restaurant/StreetView'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/common/Skeleton'
 import { toast } from 'sonner'
@@ -13,16 +14,24 @@ import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
 import { useCatalogStore } from '@/store/catalogStore'
 import { useCatalog } from '@/hooks/useCatalog'
-import { deleteReview, getRestaurant } from '@/lib/api'
+import { deleteReview, getOsmRestaurant, getRestaurant } from '@/lib/api'
 import { buildCatalogIdMap, mapApiRestaurantDetail } from '@/lib/catalog'
+import { trackInteraction } from '@/lib/interactions'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@/lib/osm'
 import { API_USER_ID, isUuid } from '@/lib/config'
 import { formatBRL } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { Restaurant } from '@/types'
 
 export function RestaurantDetail() {
-  const { id } = useParams<{ id: string }>()
+  const { id, osmType, osmId } = useParams<{
+    id?: string
+    osmType?: string
+    osmId?: string
+  }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const isOsmRoute = Boolean(osmType && osmId)
   const [tab, setTab] = useState<'menu' | 'reviews' | 'about'>('menu')
   const total = useCartStore((s) => s.total())
   const count = useCartStore((s) => s.count())
@@ -51,13 +60,44 @@ export function RestaurantDetail() {
     !!id && !isUuid(id) && !resolvedId && !catalogLoaded
 
   useEffect(() => {
+    let active = true
+
+    if (isOsmRoute) {
+      const validType =
+        osmType === 'node' || osmType === 'way' || osmType === 'relation'
+      const numericId = Number(osmId)
+
+      if (!validType || !Number.isInteger(numericId) || numericId <= 0) {
+        setDetail(null)
+        setDetailLoading(false)
+        return () => {
+          active = false
+        }
+      }
+
+      setDetail(null)
+      setDetailLoading(true)
+      getOsmRestaurant(osmType, numericId)
+        .then((apiDetail) => {
+          if (active) setDetail(mapApiRestaurantDetail(apiDetail))
+        })
+        .catch(() => {
+          if (active) setDetail(null)
+        })
+        .finally(() => {
+          if (active) setDetailLoading(false)
+        })
+
+      return () => {
+        active = false
+      }
+    }
+
     if (!id) {
       setDetail(null)
       setDetailLoading(false)
       return
     }
-
-    let active = true
 
     if (waitingForCatalog) {
       setDetailLoading(true)
@@ -107,10 +147,22 @@ export function RestaurantDetail() {
     return () => {
       active = false
     }
-  }, [id, resolvedId, waitingForCatalog, refreshToken])
+  }, [
+    id,
+    resolvedId,
+    waitingForCatalog,
+    refreshToken,
+    isOsmRoute,
+    osmType,
+    osmId,
+  ])
 
-  const restaurant =
-    detail && detail.id === resolvedId ? detail : catalogRestaurant
+  const restaurant = isOsmRoute
+    ? detail
+    : detail && detail.id === resolvedId
+      ? detail
+      : catalogRestaurant
+  const isOsm = restaurant?.source === 'osm'
 
   // Sempre deriva a lista de um array estável. O seletor anterior devolvia um
   // novo array a cada render e causava loop infinito no useSyncExternalStore.
@@ -134,6 +186,13 @@ export function RestaurantDetail() {
   )
   const reviews = [...localOnlyReviews, ...apiReviews]
 
+  // O OSM não fornece cardápio nem avaliações; a tela mantém o mesmo padrão
+  // visual, mas exibe apenas a seção com dados disponíveis.
+  const availableTabs: Array<'menu' | 'reviews' | 'about'> = isOsm
+    ? ['about']
+    : ['menu', 'reviews', 'about']
+  const activeTab = availableTabs.includes(tab) ? tab : 'about'
+
   useEffect(() => {
     if (!restaurant || lastTrackedId.current === restaurant.id) return
     lastTrackedId.current = restaurant.id
@@ -142,7 +201,31 @@ export function RestaurantDetail() {
       restaurantName: restaurant.name,
       category: restaurant.category,
     })
-  }, [restaurant, trackEvent])
+
+    const recommendationContext = useCatalogStore.getState().recommendationContext
+    const context = {
+      experimentGroup: recommendationContext?.experimentGroup,
+      experimentMode: recommendationContext?.experimentMode,
+      experimentVersion: recommendationContext?.experimentVersion,
+      recommendationId: recommendationContext?.recommendationId,
+      recommendationPosition:
+        recommendationContext?.positions[restaurant.id],
+      modelVersion: recommendationContext?.modelVersion,
+    }
+
+    // O clique no card/marcador chega via state da navegação. Só é possível
+    // registrar depois que o restaurante do OSM foi persistido e recebeu UUID.
+    const navigationState = location.state as
+      | { interaction?: string }
+      | null
+    if (navigationState?.interaction === 'CLICK') {
+      trackInteraction(restaurant.id, 'CLICK', context)
+    }
+    // VIEW_DETAILS representa a abertura da tela de detalhes (sinal mais forte
+    // que a impressão); VIEW é mantido por compatibilidade com o histórico.
+    trackInteraction(restaurant.id, 'VIEW_DETAILS', context)
+    trackInteraction(restaurant.id, 'VIEW', context)
+  }, [restaurant, trackEvent, location.state])
 
   const handleRemoveReview = () => {
     if (!restaurant || !userReview) return
@@ -193,7 +276,16 @@ export function RestaurantDetail() {
     >
       {/* Hero */}
       <div className="relative">
-        <img src={restaurant.image} alt={restaurant.name} className="w-full h-52 object-cover" />
+        {restaurant.image ? (
+          <img src={restaurant.image} alt={restaurant.name} className="w-full h-52 object-cover" />
+        ) : (
+          <div
+            className="w-full h-40 bg-gradient-to-br from-primary/10 via-surface-muted to-white flex items-center justify-center"
+            aria-hidden="true"
+          >
+            <MapPin size={40} className="text-primary/50" />
+          </div>
+        )}
         <button
           type="button"
           onClick={() => navigate(-1)}
@@ -207,7 +299,11 @@ export function RestaurantDetail() {
 
       <div className="p-4">
         <h1 className="font-display font-bold text-xl text-ink">{restaurant.name}</h1>
-        <p className="text-sm text-ink-soft">{restaurant.category}</p>
+        <p className="text-sm text-ink-soft">
+          {[restaurant.category, isOsm ? restaurant.cuisine : null]
+            .filter((value): value is string => Boolean(value))
+            .join(' · ')}
+        </p>
         {restaurant.dietaryTags.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {restaurant.dietaryTags.map((tag) => (
@@ -228,26 +324,46 @@ export function RestaurantDetail() {
 
         {/* Info card */}
         <div className="mt-4 p-3 bg-surface-muted rounded-2xl space-y-1.5 text-sm text-ink">
-          <div className="flex items-center gap-2">
-            <Star size={14} className="text-star fill-star" />
-            {restaurant.rating} ({restaurant.reviewCount} avaliações)
-          </div>
-          <div className="flex items-start gap-2">
-            <MapPin size={14} className="mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <span>{restaurant.address}</span>
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="mt-1 flex items-center gap-1 text-primary text-xs font-medium underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                aria-label={`Abrir ${restaurant.name} no mapa`}
-              >
-                <ExternalLink size={12} />
-                Abrir no mapa
-              </a>
+          {!isOsm && (
+            <div className="flex items-center gap-2">
+              <Star size={14} className="text-star fill-star" />
+              {restaurant.rating} ({restaurant.reviewCount} avaliações)
             </div>
-          </div>
+          )}
+          {restaurant.address && (
+            <div className="flex items-start gap-2">
+              <MapPin size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <span>{restaurant.address}</span>
+                <a
+                  href={
+                    isOsm
+                      ? restaurant.osmUrl ??
+                        (restaurant.latitude != null &&
+                        restaurant.longitude != null
+                          ? `https://www.openstreetmap.org/?mlat=${restaurant.latitude}&mlon=${restaurant.longitude}#map=17/${restaurant.latitude}/${restaurant.longitude}`
+                          : undefined)
+                      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`
+                  }
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-1 flex items-center gap-1 text-primary text-xs font-medium underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={`Abrir ${restaurant.name} no mapa`}
+                >
+                  <ExternalLink size={12} />
+                  {isOsm ? 'Ver no OpenStreetMap' : 'Abrir no mapa'}
+                </a>
+              </div>
+            </div>
+          )}
+          {isOsm &&
+            restaurant.latitude != null &&
+            restaurant.longitude != null && (
+              <div className="flex items-center gap-2 text-xs text-ink-soft">
+                <MapPin size={14} className="shrink-0" />
+                {restaurant.latitude.toFixed(5)}, {restaurant.longitude.toFixed(5)}
+              </div>
+            )}
           {restaurant.phone && (
             <div className="flex items-center gap-2">
               <Phone size={14} />
@@ -259,17 +375,52 @@ export function RestaurantDetail() {
               </a>
             </div>
           )}
-          <div className="flex items-center gap-3 text-ink-soft text-xs pt-1">
-            <span className="flex items-center gap-1">
-              <Bike size={12} />
-              {restaurant.deliveryFee === 0 ? 'Grátis' : formatBRL(restaurant.deliveryFee)}
-            </span>
-            <span className="flex items-center gap-1">
-              <Clock size={12} />
-              {restaurant.deliveryTimeMin}-{restaurant.deliveryTimeMax} min
-            </span>
-          </div>
+          {isOsm && restaurant.website && (
+            <div className="flex items-center gap-2">
+              <Globe size={14} className="shrink-0" />
+              <a
+                href={restaurant.website}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-primary underline rounded truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {restaurant.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+              </a>
+            </div>
+          )}
+          {!isOsm && (
+            <div className="flex items-center gap-3 text-ink-soft text-xs pt-1">
+              <span className="flex items-center gap-1">
+                <Bike size={12} />
+                {restaurant.deliveryFee === 0 ? 'Grátis' : formatBRL(restaurant.deliveryFee)}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock size={12} />
+                {restaurant.deliveryTimeMin}-{restaurant.deliveryTimeMax} min
+              </span>
+            </div>
+          )}
+          {isOsm && (
+            <p className="pt-1 text-[10px] text-ink-soft">
+              <a
+                href={OSM_COPYRIGHT_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline rounded hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {OSM_ATTRIBUTION}
+              </a>
+            </p>
+          )}
         </div>
+
+        {restaurant.latitude != null && restaurant.longitude != null && (
+          <StreetView
+            latitude={restaurant.latitude}
+            longitude={restaurant.longitude}
+            name={restaurant.name}
+          />
+        )}
 
         {/* Tabs */}
         <div
@@ -277,14 +428,14 @@ export function RestaurantDetail() {
           aria-label="Seções do restaurante"
           className="flex gap-1 mt-4 border-b border-gray-100"
         >
-          {(['menu', 'reviews', 'about'] as const).map((t) => (
+          {availableTabs.map((t) => (
             <button
               key={t}
               type="button"
-              aria-pressed={tab === t}
+              aria-pressed={activeTab === t}
               onClick={() => setTab(t)}
               className={`px-3 py-2 text-sm font-medium rounded-t focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                tab === t ? 'text-primary border-b-2 border-primary' : 'text-ink-soft'
+                activeTab === t ? 'text-primary border-b-2 border-primary' : 'text-ink-soft'
               }`}
             >
               {t === 'menu' ? 'Cardápio' : t === 'reviews' ? 'Avaliações' : 'Sobre'}
@@ -293,7 +444,7 @@ export function RestaurantDetail() {
         </div>
 
         <div className="mt-3">
-          {tab === 'menu' &&
+          {activeTab === 'menu' &&
             (restaurant.menu.length > 0 ? (
               <div
                 className={cn(
@@ -317,7 +468,7 @@ export function RestaurantDetail() {
                 Cardápio indisponível no momento.
               </p>
             ))}
-          {tab === 'reviews' && (
+          {activeTab === 'reviews' && (
             <div className="space-y-4">
               {!hasReviewed && !editingReview && (
                 <UserReviewForm
@@ -385,44 +536,130 @@ export function RestaurantDetail() {
               )}
             </div>
           )}
-          {tab === 'about' && (
+          {activeTab === 'about' && (
             <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-primary" />
-                <span className="font-medium text-ink">Horário de funcionamento</span>
-              </div>
-              <p className="text-sm text-ink">{restaurant.hours}</p>
+              {isOsm ? (
+                <>
+                  {restaurant.address && (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <MapPin size={14} className="text-primary" />
+                        <span className="font-medium text-ink">Endereço</span>
+                      </div>
+                      <p className="text-sm text-ink">{restaurant.address}</p>
+                    </div>
+                  )}
 
-              <div className="flex items-center gap-2">
-                <CreditCard size={14} className="text-primary" />
-                <span className="font-medium text-ink">Formas de pagamento</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {restaurant.paymentMethods.map((method) => (
-                  <span
-                    key={method}
-                    className="text-xs text-ink border border-gray-200 rounded-full px-3 py-1"
-                  >
-                    {method}
-                  </span>
-                ))}
-              </div>
+                  {restaurant.cuisine && (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <UtensilsCrossed size={14} className="text-primary" />
+                        <span className="font-medium text-ink">Cozinha</span>
+                      </div>
+                      <p className="text-sm text-ink">{restaurant.cuisine}</p>
+                    </div>
+                  )}
+
+                  {(restaurant.openingHours ?? restaurant.hours) && (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Clock size={14} className="text-primary" />
+                        <span className="font-medium text-ink">
+                          Horário de funcionamento
+                        </span>
+                      </div>
+                      <p className="text-sm text-ink">
+                        {restaurant.openingHours ?? restaurant.hours}
+                      </p>
+                    </div>
+                  )}
+
+                  {restaurant.website && (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Globe size={14} className="text-primary" />
+                        <span className="font-medium text-ink">Site</span>
+                      </div>
+                      <a
+                        href={restaurant.website}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-sm text-primary underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        {restaurant.website}
+                      </a>
+                    </div>
+                  )}
+
+                  {restaurant.osmUrl && (
+                    <a
+                      href={restaurant.osmUrl}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <ExternalLink size={14} />
+                      Ver no OpenStreetMap
+                    </a>
+                  )}
+
+                  {!restaurant.address &&
+                    !restaurant.cuisine &&
+                    !restaurant.openingHours &&
+                    !restaurant.website && (
+                      <p className="text-sm text-ink-soft">
+                        O OpenStreetMap não possui informações adicionais
+                        cadastradas para este estabelecimento.
+                      </p>
+                    )}
+
+                  <p className="text-[10px] text-ink-soft">
+                    Dados colaborativos do OpenStreetMap; informações podem
+                    estar incompletas.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Clock size={14} className="text-primary" />
+                    <span className="font-medium text-ink">Horário de funcionamento</span>
+                  </div>
+                  <p className="text-sm text-ink">{restaurant.hours}</p>
+
+                  <div className="flex items-center gap-2">
+                    <CreditCard size={14} className="text-primary" />
+                    <span className="font-medium text-ink">Formas de pagamento</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {restaurant.paymentMethods.map((method) => (
+                      <span
+                        key={method}
+                        className="text-xs text-ink border border-gray-200 rounded-full px-3 py-1"
+                      >
+                        {method}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
             </section>
           )}
         </div>
       </div>
 
-      {/* Rodapé */}
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] p-3 bg-white border-t border-gray-100">
-        <button
-          type="button"
-          onClick={() => navigate('/sacola')}
-          disabled={count === 0}
-          className="w-full bg-primary text-white rounded-2xl py-3 font-semibold disabled:opacity-50 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          Ver sacola · {formatBRL(total)}
-        </button>
-      </div>
+      {/* Rodapé: o OSM não tem cardápio nem pedido no FoodFlow. */}
+      {!isOsm && (
+        <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] p-3 bg-white border-t border-gray-100">
+          <button
+            type="button"
+            onClick={() => navigate('/sacola')}
+            disabled={count === 0}
+            className="w-full bg-primary text-white rounded-2xl py-3 font-semibold disabled:opacity-50 hover:bg-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            Ver sacola · {formatBRL(total)}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

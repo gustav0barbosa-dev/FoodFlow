@@ -2,7 +2,17 @@
 
 export type Turno = 'manha' | 'tarde' | 'noite' | 'madrugada'
 
-export type ABGroup = 'personalized' | 'distance' | ''
+export type ABGroup = 'baseline' | 'personalized' | 'distance' | ''
+
+/**
+ * Modo de uso das recomendações:
+ * - ``experiment``: atribuição persistente pelo backend; conta nas métricas
+ *   oficiais do experimento A/B.
+ * - ``demo``: permite escolher a estratégia manualmente para demonstração;
+ *   os eventos são gravados com ``experiment_mode='demo'`` e excluídos das
+ *   métricas oficiais.
+ */
+export type ExperimentMode = 'experiment' | 'demo'
 
 function readNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value)
@@ -46,6 +56,14 @@ export const API_USER_ID = DEFAULT_USER_ID
 /** Grupo do experimento A/B (vazio = atribuição determinística pelo backend). */
 export const DEFAULT_AB_GROUP =
   (import.meta.env.VITE_AB_GROUP as ABGroup) ?? ''
+
+/**
+ * Modo padrão. O modo experimental é o padrão para não contaminar as métricas
+ * oficiais com escolhas manuais. ``VITE_EXPERIMENT_MODE=demo`` habilita a
+ * demonstração explicitamente.
+ */
+export const DEFAULT_EXPERIMENT_MODE: ExperimentMode =
+  import.meta.env.VITE_EXPERIMENT_MODE === 'demo' ? 'demo' : 'experiment'
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i

@@ -1,7 +1,9 @@
-import { Star, MapPin } from 'lucide-react'
+import { Star, MapPin, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Restaurant } from '@/types'
 import { useEventsStore } from '@/store/eventsStore'
+import { useCatalogStore } from '@/store/catalogStore'
+import { trackInteraction } from '@/lib/interactions'
 import { FavoriteButton } from '@/components/restaurant/FavoriteButton'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { cn } from '@/lib/utils'
@@ -12,15 +14,21 @@ export function RestaurantCard({
   source = 'home_featured',
   query = '',
   className,
+  onDismiss,
 }: {
   restaurant: Restaurant
   size?: 'lg' | 'sm'
   source?: string
   query?: string
   className?: string
+  onDismiss?: (restaurant: Restaurant) => void
 }) {
   const isLarge = size === 'lg'
   const trackEvent = useEventsStore((s) => s.trackEvent)
+  const recommendationContext = useCatalogStore(
+    (s) => s.recommendationContext
+  )
+  const position = recommendationContext?.positions[restaurant.id]
 
   const handleClick = () => {
     trackEvent('restaurant_card_clicked', {
@@ -28,6 +36,28 @@ export function RestaurantCard({
       restaurantName: restaurant.name,
       source,
     })
+    trackInteraction(restaurant.id, 'CLICK', {
+      experimentGroup: recommendationContext?.experimentGroup,
+      experimentMode: recommendationContext?.experimentMode,
+      experimentVersion: recommendationContext?.experimentVersion,
+      recommendationId: recommendationContext?.recommendationId,
+      recommendationPosition: position,
+      modelVersion: recommendationContext?.modelVersion,
+      metadata: { source },
+    })
+  }
+
+  const handleDismiss = () => {
+    trackInteraction(restaurant.id, 'DISMISS', {
+      experimentGroup: recommendationContext?.experimentGroup,
+      experimentMode: recommendationContext?.experimentMode,
+      experimentVersion: recommendationContext?.experimentVersion,
+      recommendationId: recommendationContext?.recommendationId,
+      recommendationPosition: position,
+      modelVersion: recommendationContext?.modelVersion,
+      metadata: { source },
+    })
+    onDismiss?.(restaurant)
   }
 
   return (
@@ -78,6 +108,17 @@ export function RestaurantCard({
       </Link>
 
       <FavoriteButton restaurant={restaurant} className="absolute top-2 right-2" />
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={handleDismiss}
+          aria-label={`Não me interessa: ${restaurant.name}`}
+          title="Não me interessa"
+          className="absolute top-2 right-12 bg-white/90 hover:bg-white text-ink-soft rounded-full p-1.5 shadow-sm"
+        >
+          <X size={14} />
+        </button>
+      )}
     </div>
   )
 }

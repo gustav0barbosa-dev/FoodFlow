@@ -2,6 +2,8 @@ import { Heart } from 'lucide-react'
 import type { Restaurant } from '@/types'
 import { useFavoritesStore } from '@/store/favoritesStore'
 import { useEventsStore } from '@/store/eventsStore'
+import { useCatalogStore } from '@/store/catalogStore'
+import { trackInteraction } from '@/lib/interactions'
 import { cn } from '@/lib/utils'
 
 export function FavoriteButton({
@@ -14,6 +16,9 @@ export function FavoriteButton({
   const isFavorite = useFavoritesStore((s) => s.favoriteIds.includes(restaurant.id))
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
   const trackEvent = useEventsStore((s) => s.trackEvent)
+  const recommendationContext = useCatalogStore(
+    (s) => s.recommendationContext
+  )
 
   const handleToggle = () => {
     toggleFavorite(restaurant.id)
@@ -22,6 +27,19 @@ export function FavoriteButton({
       restaurantName: restaurant.name,
       action: isFavorite ? 'removed' : 'added',
     })
+    // Remover dos favoritos não é uma nova preferência positiva.
+    if (!isFavorite) {
+      trackInteraction(restaurant.id, 'FAVORITE', {
+        experimentGroup: recommendationContext?.experimentGroup,
+        experimentMode: recommendationContext?.experimentMode,
+        experimentVersion: recommendationContext?.experimentVersion,
+        recommendationId: recommendationContext?.recommendationId,
+        recommendationPosition:
+          recommendationContext?.positions[restaurant.id],
+        modelVersion: recommendationContext?.modelVersion,
+        metadata: { source: 'favorite_button' },
+      })
+    }
   }
 
   return (

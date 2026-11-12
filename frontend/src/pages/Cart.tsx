@@ -7,6 +7,8 @@ import { useCartStore } from '@/store/cartStore'
 import { useOrdersStore } from '@/store/ordersStore'
 import { useAddressStore } from '@/store/addressStore'
 import { useEventsStore } from '@/store/eventsStore'
+import { useCatalogStore } from '@/store/catalogStore'
+import { trackInteraction } from '@/lib/interactions'
 import { formatBRL } from '@/lib/utils'
 import { CartLineItem } from '@/components/cart/CartLineItem'
 import { CartSummary } from '@/components/cart/CartSummary'
@@ -90,6 +92,31 @@ export function Cart() {
       total: order.total,
       restaurantIds: groups.map((group) => group.restaurantId),
     })
+
+    // Compra confirmada é a interação de maior peso no recomendador. O valor
+    // considerado é o subtotal do restaurante (sem frete), e a chave de
+    // idempotência evita duplicar a compra se o pedido for reenviado.
+    const recommendationContext =
+      useCatalogStore.getState().recommendationContext
+    for (const group of groups) {
+      const purchaseValue = group.lines.reduce(
+        (sum, line) => sum + line.item.price * line.quantity,
+        0
+      )
+      trackInteraction(group.restaurantId, 'PURCHASE', {
+        purchaseValue,
+        idempotencyKey: `${order.id}:${group.restaurantId}`,
+        experimentGroup: recommendationContext?.experimentGroup,
+        experimentMode: recommendationContext?.experimentMode,
+        experimentVersion: recommendationContext?.experimentVersion,
+        recommendationId: recommendationContext?.recommendationId,
+        recommendationPosition:
+          recommendationContext?.positions[group.restaurantId],
+        modelVersion: recommendationContext?.modelVersion,
+        metadata: { source: 'cart_confirmation' },
+      })
+    }
+
     clear()
   }
 
