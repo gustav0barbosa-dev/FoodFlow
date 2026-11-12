@@ -22,20 +22,123 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
 | `GET` | `/api/v1/metrics/recommendations` | Contadores de cache, modelo e popularidade |
 | `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
 | `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
-| `GET` | `/api/v1/experiment/ab-test` | Resultados do experimento A/B |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados do experimento A/B calculados a partir do banco (Redis apenas como diagnóstico) |
+| `GET` | `/api/v1/ml/metrics` | Métricas do último treino offline (`models/training_metrics.json`) |
+| `GET` | `/api/v1/street-view/metadata?lat=&lon=` | Informa se há panorama disponível; nunca expõe a chave |
+| `GET` | `/api/v1/street-view/image?lat=&lon=` | Proxy da imagem do Street View (a chave fica no backend) |
 | `GET` | `/api/v1/restaurants/search?lat=&lon=&radius_km=` | Busca geoespacial (PostGIS `ST_DWithin`) |
+| `GET` | `/api/v1/restaurants/nearby?lat=&lon=&radius=&category=` | Descoberta no OpenStreetMap/Overpass; `radius` em metros e `category` opcional |
+| `GET` | `/api/v1/restaurants/osm/{osm_type}/{osm_id}?refresh=` | Detalhe do OSM (persiste no primeiro acesso e devolve o UUID interno) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante + últimas 10 avaliações |
+| `POST` | `/api/v1/interactions` | Registra `IMPRESSION`, `VIEW`, `VIEW_DETAILS`, `CLICK`, `FAVORITE`, `PURCHASE` ou `DISMISS` (idempotência opcional) |
+| `GET` | `/api/v1/users/{id}/preferences` | Perfil de preferências derivado do histórico |
 | `POST` | `/api/v1/reviews` | Cria avaliação com idempotência via `Idempotency-Key` |
 | `PUT` | `/api/v1/reviews/{id}` | Atualiza avaliação do próprio usuário |
 | `DELETE` | `/api/v1/reviews/{id}` | Remove avaliação do próprio usuário |
-| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&experiment=` | Ranking personalizado (Redis → LightGBM → popularidade) |
-| `POST` | `/api/v1/recommendations/train` | Treina o modelo com os pedidos existentes |
+| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&mode=&experiment=` | Ranking personalizado (Redis → LightGBM → popularidade). `mode=experiment` usa atribuição persistente; `mode=demo` aceita `experiment=baseline\|personalized\|distance` |
+| `GET` | `/api/v1/experiment/ab-test` | Resultados do A/B com fases, ICs, contaminação e análise estatística (Redis apenas como diagnóstico) |
+| `POST` | `/api/v1/recommendations/train` | Retorna `202`; o treino do LightGBM é offline (`python -m app.ml.train`) |
 | `POST` | `/api/v1/recommendations/train-lora` | Retorna `202`; treino LoRA é offline |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa o re-ranking sobre scores em cache |
 | `POST` | `/api/v1/events` | Coleta de eventos para o pipeline de ML |
 | `GET` | `/api/v1/users/{id}` | Perfil do usuário (nome, e-mail e preferências) |
 
 `turno` aceita `manha`, `tarde`, `noite` ou `madrugada` (padrão: `tarde`).
+
+## OpenStreetMap + Overpass (descoberta de restaurantes reais)
+
+A rota `/api/v1/restaurants/nearby` consulta o **OpenStreetMap** por meio da
+**Overpass API** em uma camada separada do catálogo próprio. Ela apenas descobre
+estabelecimentos reais; a persistência acontece quando o usuário abre o detalhe.
+
+O detalhe fica em `/api/v1/restaurants/osm/{osm_type}/{osm_id}`. Na primeira
+abertura o backend consulta a Overpass, grava o restaurante no PostGIS com
+`source="osm"` e o par único `(osm_type, osm_id)` e devolve o UUID interno. Nas
+aberturas seguintes usa o registro persistido; `refresh=true` força uma nova
+consulta e, se a Overpass falhar, mantém o cache local. Campos ausentes no OSM
+permanecem `null`/vazios — nenhum telefone, horário, site, cardápio ou avaliação
+é inventado.
+
+Parâmetros: `lat`, `lon`, `radius` (metros, 100–50000, padrão `3000`) e
+`category` opcional (`restaurant`, `fast_food`, `cafe`, `bar`). A resposta é
+normalizada:
+
+```json
+{
+  "source": "OpenStreetMap",
+  "count": 1,
+  "restaurants": [
+    {
+      "osm_id": 123456789,
+      "osm_type": "node",
+      "name": "Restaurante Exemplo",
+      "latitude": -23.551,
+      "longitude": -46.634,
+      "category": "restaurant",
+      "cuisine": "italian",
+      "address": { "street": "Rua Exemplo", "number": "100", "city": "São Paulo", "postcode": null },
+      "phone": null,
+      "website": null,
+      "opening_hours": null,
+      "osm_url": "https://www.openstreetmap.org/node/123456789",
+      "distance_km": 0.42
+    }
+  ]
+}
+```
+
+Configuração (opcional; os padrões funcionam nas instâncias públicas):
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `OVERPASS_API_URL` | `https://overpass-api.de/api/interpreter` | Instância consultada |
+| `OVERPASS_CACHE_TTL_SECONDS` | `300` | TTL do cache Redis por região |
+| `OVERPASS_TIMEOUT_SECONDS` | `25` | Timeout da consulta QL/HTTP |
+| `OVERPASS_USER_AGENT` | `FoodFlow/0.2` | Identificação exigida pelas instâncias públicas |
+
+O cache Redis usa a chave `nearby:osm:v1:{lat:.3f}:{lon:.3f}:{radius}:{category|all}`
+e é consultado antes de qualquer chamada externa; as distâncias são recalculadas
+para a origem da requisição. Consultas concorrentes à Overpass são limitadas a
+duas. Erros são mapeados para `503` (rate limit), `504` (timeout) e `502`
+(falha upstream); `category` inválida retorna `422`. Campos ausentes no OSM são
+retornados como `null`; a persistência ocorre somente no endpoint de detalhe.
+
+A Overpass API não oferece rotas nem geocodificação; para essas funcionalidades
+será necessário integrar outro serviço compatível com OpenStreetMap. Os dados
+são distribuídos sob a Open Database License (ODbL) e exigem a atribuição
+“© OpenStreetMap contributors”.
+
+### Ingestão por região (CLI)
+
+O pipeline em lote é uma operação de manutenção — nunca um endpoint HTTP:
+
+```bash
+cd backend
+python scripts/ingest_osm.py --south -23.60 --west -46.70 \
+  --north -23.50 --east -46.60 [--category cafe]
+```
+
+A região é validada (área máxima de 1 grau²) para não sobrecarregar a Overpass.
+O pipeline normaliza, valida, deduplica por `(osm_type, osm_id)` e faz upsert,
+renovando `last_synced_at`; o resumo informa `fetched`, `deduplicated`,
+`created`, `updated`, `skipped` e `errors` por linha. Reexecutar é idempotente.
+`dietary_tags` é preenchido apenas quando a tag `diet:*` é explicitamente
+afirmativa — ausência significa “não informado”, nunca “não possui”.
+
+## Street View (opcional)
+
+O detalhe do restaurante exibe um panorama quando há cobertura. A chave da
+Google Maps API permanece **exclusivamente no backend**: o frontend consulta
+`/api/v1/street-view/metadata` e carrega a imagem pelo proxy
+`/api/v1/street-view/image`. `ZERO_RESULTS`/`NOT_FOUND` retornam
+`available=false` (o componente fica oculto), enquanto autenticação, quota,
+timeout e falhas são mapeados para `502`/`429`/`504` sem vazar a chave.
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `GOOGLE_MAPS_API_KEY` | vazio | Chave do backend; sem ela o componente não aparece |
+| `STREET_VIEW_TIMEOUT_SECONDS` | `5` | Timeout das chamadas ao Google |
+| `STREET_VIEW_RADIUS_METERS` | `50` | Raio de busca do panorama |
 
 ## Como a recomendação funciona
 
@@ -45,8 +148,40 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
    - com modelo treinado **e** histórico do usuário: features por turno + LightGBM;
    - sem histórico (cold start): fallback por popularidade (nota + volume de avaliações).
 4. Normaliza os scores para `[0, 1]`, grava no Redis com TTL de 24h e ordena os candidatos.
+5. No grupo `personalized`, mistura a afinidade derivada das interações recentes
+   (`blend_with_affinity`, `alpha=0.3`) para refletir o comportamento do usuário
+   sem retreinar o modelo. O grupo de controle `distance` não recebe afinidade.
 
 As features seguem a documentação: ticket médio, frete médio, contagem por turno e **medoide** aproximado por moda ponderada pela recência. O turno solicitado entra como one-hot (`is_manha`, `is_tarde`, ...), então o modelo aprende rankings diferentes por período. O treino usa amostragem `1 positivo : 3 negativos` por turno e remove o restaurante-alvo do histórico para reduzir vazamento.
+
+### Interações e perfil de preferências
+
+O histórico comportamental fica na tabela `user_restaurant_interactions`
+(append-only). Cada evento é registrado via `POST /api/v1/interactions`:
+
+| Tipo | Peso |
+|------|------|
+| `IMPRESSION` | 0.0 (apenas exposição; base do CTR) |
+| `VIEW` | 0.2 |
+| `VIEW_DETAILS` | 0.4 |
+| `CLICK` | 1.0 |
+| `FAVORITE` | 2.5 |
+| `PURCHASE` | 5.0 |
+| `DISMISS` | 0.0 (tratado como sinal negativo separado) |
+
+Os pesos decaem com a recência (meia-vida de 30 dias) e pedidos reais também
+entram na afinidade de restaurante/categoria/cozinha. Cada interação aceita
+`experiment_group`, `experiment_mode` (`experiment`/`demo`),
+`experiment_version`, `recommendation_id`, `recommendation_position`,
+`model_version` e `metadata` para atribuir o evento à exposição exibida.
+`PURCHASE` só deve ser enviado na confirmação do pedido e aceita
+`purchase_value`; o frontend usa `idempotency_key` para não duplicar a mesma
+compra. Eventos com `experiment_mode='demo'` são gravados, mas excluídos das
+métricas oficiais. As features do LightGBM passam a considerar contagens por
+turno, afinidade por restaurante/categoria/cozinha e ticket médio; o perfil
+agregado é exposto em `GET /api/v1/users/{id}/preferences`. Criar uma interação
+invalida o cache de scores daquele usuário, então a próxima consulta já reflete
+o novo histórico.
 
 ## Batch scoring
 
@@ -78,10 +213,14 @@ python -m app.ml.train --source db    # usa os pedidos do PostgreSQL
 python -m app.ml.train --source seed  # seed determinístico, sem PostGIS
 ```
 
-O artefato é salvo em `models/recommender.joblib` com metadados JSON. Se o
-modelo não existir ou não carregar, a API usa o fallback por popularidade.
-Treine no mesmo ambiente da API: artefatos gerados com NumPy 2.x não
-carregam em ambientes com NumPy 1.26 (`numpy._core`).
+O artefato é salvo em `models/recommender.joblib` com metadados JSON (versão,
+data, features e parâmetros). O relatório completo do treino é gravado em
+`models/training_metrics.json` e exposto em `GET /api/v1/ml/metrics`: split
+temporal, Precision@K, Recall@K, NDCG@K, MAP@K, cobertura e comparação com os
+baselines de popularidade e aleatório. Se o modelo não existir ou não carregar,
+a API usa o fallback por popularidade. Treine no mesmo ambiente da API:
+artefatos gerados com NumPy 2.x não carregam em ambientes com NumPy 1.26
+(`numpy._core`).
 
 ## Re-ranking LoRA (experimental)
 
@@ -157,7 +296,7 @@ python -m alembic upgrade head --sql    # revisa o SQL sem conectar
 python -m alembic revision --autogenerate -m "descricao"  # após mudar models.py
 ```
 
-A migração inicial cria a extensão PostGIS. Se a role do banco não for superusuária, crie a extensão antes como `postgres`:
+A migração inicial (`0001`) cria a extensão PostGIS. A revisão `0002` adiciona os campos OSM em `restaurants` (`source`, `osm_type`, `osm_id`, `latitude`, `longitude`, `cuisine`, `website`, `opening_hours`, `osm_url`), a constraint única `(osm_type, osm_id)` e a tabela `user_restaurant_interactions` com índices por usuário/data. Se a role do banco não for superusuária, crie a extensão antes como `postgres`:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -197,7 +336,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic, métricas, readiness, round-trip do modelo, query PostGIS, validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic (revisões `0001` a `0004`), métricas de ranking (P@K, R@K, NDCG, MAP, cobertura), split temporal por contexto, métricas, readiness, round-trip do modelo, query PostGIS, persistência/detalhe de restaurantes OSM, ingestão por bbox, Street View (metadata/proxy e erros), interações e perfil de preferências, atribuição e métricas do experimento A/B (fases, ICs, Bonferroni, contaminação e modo demo), validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 
@@ -216,11 +355,17 @@ backend/
 │   ├── database.py
 │   ├── models.py
 │   ├── schemas.py
-│   ├── crud.py                  # busca geoespacial, reviews, eventos
+│   ├── crud.py                  # busca geoespacial, reviews, eventos, interações
 │   ├── seeds.py                 # seed idempotente
 │   ├── seed_data.py             # dados do seed
+│   ├── services/
+│   │   ├── restaurant_service.py # persistência/upsert e detalhe OSM
+│   │   └── interactions.py       # registro de interações e perfil derivado
+│   ├── integrations/
+│   │   └── overpass_client.py    # consulta à Overpass API
 │   ├── api/
 │   │   ├── restaurants.py
+│   │   ├── interactions.py      # interações + preferências
 │   │   ├── reviews.py
 │   │   ├── recommendations.py
 │   │   ├── metrics.py          # contadores de cache/modelo

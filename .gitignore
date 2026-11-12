@@ -54,6 +54,10 @@ htmlcov/
 # ML artifacts (reprodutíveis via train.py)
 backend/models/*.joblib
 backend/models/*.pkl
+backend/models/candidates/
+backend/models/archive/
+# Relatório gerado pelo treino; contém caminhos absolutos da máquina.
+backend/models/training_metrics.json
 backend/models/lora_reranker/
 
 # Docker
@@ -64,3 +68,7 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+upload_model.py
+
+docs/relatorio-final.md

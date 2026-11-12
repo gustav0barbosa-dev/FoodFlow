@@ -28,6 +28,8 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | Recurso | Descrição |
 |---------|-----------|
 | 📍 **Busca geoespacial** | Restaurantes próximos calculados com PostGIS (`ST_DWithin` + índice GIST) |
+| 🗺️ **Descoberta no OpenStreetMap** | Restaurantes reais próximos via Overpass API, com cache Redis e mapa Leaflet (sem chave); o detalhe persiste o estabelecimento e abre a mesma tela do catálogo |
+| 🧠 **Histórico no recomendador** | `VIEW`, `CLICK`, `FAVORITE` e `PURCHASE` alimentam features e afinidade sem retreinar o modelo |
 | ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada); re-ranking LoRA opcional |
 | 🎯 **A/B Test** | Experimento controlado: feed personalizado vs. feed por distância |
 | 📱 **Feed personalizado no mobile** | Home consome `GET /recommendations` com fallback para catálogo/mock |
@@ -59,6 +61,7 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | UI | React 18 + TypeScript |
 | Estilo | Tailwind CSS 3 |
 | Roteamento | React Router 6 |
+| Mapas | Leaflet + React-Leaflet (tiles OpenStreetMap) |
 | Estado global | Zustand |
 | Animações | Framer Motion |
 | Ícones | Lucide React |
@@ -72,6 +75,7 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | API | FastAPI (Python 3.11) |
 | Banco | PostgreSQL 16 + PostGIS |
 | Cache | Redis 7 |
+| Descoberta geográfica | OpenStreetMap + Overpass API |
 | Recomendação | LightGBM + features por turno |
 | Re-ranking | LoRA experimental (transformers + peft + torch) |
 | MLOps | Métricas de drift, A/B test, batch scoring |
@@ -231,8 +235,19 @@ Defina as variáveis de ambiente antes de subir (ou crie um `.env` na raiz):
 DATABASE_URL=postgresql+asyncpg://foodflow:foodflow@postgres:5432/foodflow
 REDIS_URL=redis://redis:6379/0
 CORS_ORIGINS=https://app.seudominio.com,https://www.seudominio.com
+# Descoberta de restaurantes reais via OpenStreetMap + Overpass API.
+# Instâncias públicas não exigem chave; use uma instância própria em produção
+# com tráfego elevado.
+OVERPASS_API_URL=https://overpass-api.de/api/interpreter
+OVERPASS_CACHE_TTL_SECONDS=300
+OVERPASS_TIMEOUT_SECONDS=25
+OVERPASS_USER_AGENT=FoodFlow/0.2
 # Opcional: habilita o re-ranker LoRA (requer requirements-llmops.txt e adapter)
 ENABLE_LORA_RERANKER=false
+# Opcional: Street View. A chave fica apenas no backend; sem ela o bloco fica oculto.
+GOOGLE_MAPS_API_KEY=
+STREET_VIEW_TIMEOUT_SECONDS=5
+STREET_VIEW_RADIUS_METERS=50
 ```
 
 O endpoint `/ready` serve como readiness probe e `/api/v1/metrics` expõe métricas no formato Prometheus.
@@ -250,14 +265,16 @@ para que o artefato sobreviva à recriação do container.
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
 | `GET` | `/api/v1/restaurants/search` | Busca geoespacial por lat/lon com raio e limite |
+| `GET` | `/api/v1/restaurants/nearby` | Restaurantes reais próximos via OpenStreetMap/Overpass (`lat`, `lon`, `radius`, `category`); sem cardápio/entrega |
+| `GET` | `/api/v1/restaurants/osm/{osm_type}/{osm_id}` | Detalhe do OSM (persiste no primeiro acesso; `refresh=true` reconsulta a Overpass) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante com avaliações |
 
 ### Recomendações
 
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `GET` | `/api/v1/recommendations` | Recomendações personalizadas (parâmetro `experiment` opcional: `personalized` \| `distance`) |
-| `POST` | `/api/v1/recommendations/train` | Treina o modelo LightGBM |
+| `GET` | `/api/v1/recommendations` | Recomendações com `mode=experiment` (padrão, atribuição persistente) ou `mode=demo` (permite `experiment` manual: `baseline` \| `personalized` \| `distance`); devolve `X-Experiment-Group`, `X-Experiment-Mode`, `X-Experiment-Version`, `X-Recommendation-Id`, `X-Model-Version` e `X-Recommendation-Strategy` |
+| `POST` | `/api/v1/recommendations/train` | Retorna `202`; o treino é offline (`python -m app.ml.train`) |
 | `POST` | `/api/v1/recommendations/train-lora` | Solicita treino LoRA offline (`202`; execute `python scripts/train_lora.py`) |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa re-ranking sobre scores em cache |
 
@@ -266,6 +283,8 @@ para que o artefato sobreviva à recriação do container.
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
 | `GET` | `/api/v1/users/{id}` | Perfil do usuário (nome, e-mail e preferências alimentares) |
+| `GET` | `/api/v1/users/{id}/preferences` | Perfil derivado do histórico (categorias, cozinhas, restaurantes) |
+| `POST` | `/api/v1/interactions` | Registra `IMPRESSION`, `VIEW`, `VIEW_DETAILS`, `CLICK`, `FAVORITE`, `PURCHASE` ou `DISMISS` com contexto do experimento (idempotência opcional) |
 
 ### Avaliações
 
@@ -289,7 +308,10 @@ para que o artefato sobreviva à recriação do container.
 | `GET` | `/ready` | Readiness (PostgreSQL, Redis, modelo) |
 | `GET` | `/api/v1/metrics/recommendations` | Métricas de cache hit rate e estratégia |
 | `GET` | `/api/v1/drift` | Relatório de drift de features (PSI) |
-| `GET` | `/api/v1/experiment/ab-test` | Resultados do experimento A/B |
+| `GET` | `/api/v1/experiment/ab-test` | Métricas dos 3 grupos calculadas a partir dos eventos no banco (Redis só como diagnóstico) |
+| `GET` | `/api/v1/ml/metrics` | Métricas do último treino offline (split temporal, P@K/R@K/NDCG@K/MAP@K, baselines) |
+| `GET` | `/api/v1/street-view/metadata` | Disponibilidade do panorama nas coordenadas |
+| `GET` | `/api/v1/street-view/image` | Proxy da imagem do Street View (chave somente no backend) |
 | `GET` | `/api/v1/metrics` | Métricas no formato Prometheus |
 
 ---
@@ -304,6 +326,7 @@ para que o artefato sobreviva à recriação do container.
 | `/home` | Recomendados para você + Perto de você + Categorias |
 | `/buscar` | Busca textual com filtros e resultados |
 | `/restaurante/:id` | Detalhe do restaurante (cardápio, avaliações, sobre) |
+| `/restaurante/osm/:osmType/:osmId` | Detalhe de restaurante do OpenStreetMap na mesma tela (apenas dados disponíveis) |
 | `/sacola` | Carrinho de compras com confirmação de pedido |
 | `/pedidos` | Histórico de pedidos com status |
 | `/perfil` | Dados do usuário, preferências, experimento A/B, eventos |
@@ -329,13 +352,15 @@ O pipeline de recomendação segue o fluxo:
 ```
 Eventos do app (cliques, pedidos, avaliações)
         ↓
+Interações (IMPRESSION/VIEW/VIEW_DETAILS/CLICK/FAVORITE/PURCHASE/DISMISS) → perfil derivado + features
+        ↓
 PostgreSQL + Redis (feature store + cache)
         ↓
 Pipeline de treino (LightGBM com features por turno)
         ↓
 Batch scoring diário → Redis (chave: user_id:turno → scores)
         ↓
-API /recommendations lê scores do Redis
+API /recommendations lê scores do Redis e aplica afinidade recente (grupo personalized)
         ↓
 Re-ranking LoRA opcional (ENABLE_LORA_RERANKER=true) ou fallback determinístico
         ↓
@@ -356,9 +381,11 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 ### Componentes de IA implementados
 
 - **LightGBM**: classificação binária (clicou/não clicou) com features por turno
+- **Interações**: `IMPRESSION`/`VIEW`/`VIEW_DETAILS`/`CLICK`/`FAVORITE`/`PURCHASE`/`DISMISS` com pesos, decaimento de recência e contexto A/B (grupo, posição e versão do modelo); afinidade reordena o ranking sem retreinar
 - **LoRA**: extensão experimental de re-ranking; carregada apenas com `ENABLE_LORA_RERANKER=true` e dependências de LLMOps instaladas. Sem adapter, usa fallback determinístico.
 - **Drift monitoring**: PSI (Population Stability Index) comparando treino vs. serving
-- **A/B test**: comparação entre feed personalizado (ML) e feed por distância
+- **A/B test**: três grupos estáveis — `baseline` (popularidade), `personalized` (LightGBM + afinidade) e `distance`; métricas lidas dos eventos oficiais no banco, com fase explícita (`collecting`/`insufficient_data`/`ready`/`statistical_analysis`). `ready` é apenas volume mínimo descritivo; significância só em `statistical_analysis`, com intervalo de Wilson e correção de Bonferroni. Modo `demo` fica fora das métricas oficiais.
+- **Métricas de treino**: split temporal por contexto, P@K, R@K, NDCG@K, MAP@K, cobertura de catálogo/usuários, baselines com os mesmos candidatos, hash do dataset e decisão de promoção/rollback em `GET /api/v1/ml/metrics`
 - **Batch scoring**: scores pré-calculados por usuário/turno gravados no Redis
 
 ### Avaliação offline do LoRA
@@ -397,6 +424,8 @@ O LoRA não superou o LightGBM em nenhuma das janelas testadas (7, 10 e 14 dias)
 - [x] Avaliação offline do LoRA com AUC/NDCG@5 (LightGBM superior; LoRA mantido experimental)
 - [x] Feed personalizado no mobile consumindo `GET /recommendations`
 - [x] Experimento A/B de recomendações
+- [x] Descoberta no OpenStreetMap com detalhe persistido e mesma tela do catálogo
+- [x] Histórico de interações (visualização, clique, favorito e compra) no recomendador
 - [x] Script e workflow de validação do Docker Compose
 
 ### 🔄 Em andamento / Próximos passos

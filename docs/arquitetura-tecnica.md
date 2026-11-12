@@ -217,6 +217,14 @@ princípios:
     `scripts/batch_score.py` permite pré-calcular os scores de usuários
     ativos de forma manual ou agendada. Sem Redis, a API continua
     funcionando e calcula os scores a cada requisição.
+5.  **Histórico recente:** interações `IMPRESSION`, `VIEW`,
+    `VIEW_DETAILS`, `CLICK`, `FAVORITE`, `PURCHASE` e `DISMISS` são
+    gravadas de forma append-only em `user_restaurant_interactions`, com
+    pesos (`0`, `1.0`, `1.2`, `1.5`, `3.0`, `6.0`, `-2.0`) e decaimento
+    de recência. O perfil derivado entra nas features do LightGBM e, no
+    grupo `personalized`, uma afinidade (`alpha=0.3`) reordena o
+    resultado sem retreinar o modelo. Os grupos `baseline` (popularidade)
+    e `distance` não aplicam afinidade.
 
 ### 4.2 Pipeline de treino (offline)
 
@@ -239,6 +247,15 @@ A documentação de referência menciona o uso de **amostragem de
 impressões** para evitar viés de visibilidade e **bootstrapping** a
 partir de interações de carrosséis de categoria quando ainda não há
 dados de produção.
+
+O treino atual usa **split temporal** (treino/validação/teste por data do
+evento) com fallback explícito para split aleatório quando não há datas
+suficientes. O relatório salvo em `models/training_metrics.json` contém
+versão, data, features, parâmetros, ROC AUC de validação/teste,
+Precision@K, Recall@K, NDCG@K, MAP@K, cobertura e comparação com os
+baselines de popularidade e aleatório; `GET /api/v1/ml/metrics` apenas lê
+esse arquivo. O treino nunca roda dentro de uma requisição HTTP — o
+endpoint `/recommendations/train` responde `202` com o comando offline.
 
 No MVP, o treino pode usar os pedidos do PostgreSQL
 (`python -m app.ml.train --source db`) ou o seed determinístico
@@ -355,11 +372,14 @@ opcional no runtime e a API degrada sem ele. Fila assíncrona
 | Método | Endpoint | Finalidade |
 |---|---|---|
 | `GET` | `/api/v1/restaurants/search?lat=&lon=&radius_km=` | Busca geoespacial de restaurantes. |
+| `GET` | `/api/v1/restaurants/nearby?lat=&lon=&radius=&category=` | Descoberta de restaurantes reais via OpenStreetMap/Overpass. |
+| `GET` | `/api/v1/restaurants/osm/{osm_type}/{osm_id}` | Detalhe do OSM na mesma tela do catálogo; persiste no primeiro acesso. |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante, incluindo avaliações. |
-| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&experiment=` | Lista ordenada por score; usa Redis quando disponível e fallback por popularidade/distância. |
-| `POST` | `/api/v1/recommendations/train` | Treina o LightGBM a partir dos pedidos do banco. |
+| `GET` | `/api/v1/recommendations?user_id=&lat=&lon=&turno=&mode=&experiment=` | Lista ordenada por score. `mode=experiment` usa atribuição persistente; `mode=demo` aceita `experiment=baseline\|personalized\|distance`. Devolve `X-Experiment-Group`, `X-Experiment-Mode`, `X-Experiment-Version`, `X-Recommendation-Id`, `X-Model-Version` e `X-Recommendation-Strategy`. |
+| `POST` | `/api/v1/recommendations/train` | Retorna `202`; o treino do LightGBM é offline. |
 | `POST` | `/api/v1/recommendations/train-lora` | Retorna `202`; o treino LoRA é uma operação offline. |
 | `POST` | `/api/v1/recommendations/rerank` | Re-executa o re-ranking sobre scores já em cache. |
+| `POST` | `/api/v1/interactions` | Registra `IMPRESSION`, `VIEW`, `VIEW_DETAILS`, `CLICK`, `FAVORITE`, `PURCHASE` ou `DISMISS` com grupo, modo, versão do experimento, `recommendation_id`, posição e versão do modelo. |
 | `POST` | `/api/v1/events` | Registra cliques, visualizações e pedidos para o pipeline de treino. |
 | `POST` | `/api/v1/reviews` | Cria avaliação, com idempotência via header `Idempotency-Key`. |
 | `PUT` | `/api/v1/reviews/{id}` | Atualiza a avaliação do próprio usuário. |
@@ -370,7 +390,16 @@ opcional no runtime e a API degrada sem ele. Fila assíncrona
 | `GET` | `/api/v1/metrics` | Métricas no formato Prometheus. |
 | `GET` | `/api/v1/metrics/recommendations` | Cache hit rate e estratégia de scoring. |
 | `GET` | `/api/v1/drift` | Relatório de drift de features (PSI). |
-| `GET` | `/api/v1/experiment/ab-test` | Resultados acumulados do experimento A/B. |
+| `GET` | `/api/v1/experiment/ab-test` | Métricas dos três grupos calculadas a partir dos eventos no banco. |
+| `GET` | `/api/v1/ml/metrics` | Relatório do último treino offline e comparação com baselines. |
+| `GET` | `/api/v1/street-view/metadata` | Disponibilidade do panorama nas coordenadas. |
+| `GET` | `/api/v1/street-view/image` | Proxy da imagem do Street View (a chave nunca sai do backend). |
+
+A ingestão em lote do OSM é feita por CLI (`scripts/ingest_osm.py`), com
+bbox validado (área máxima de 1 grau²), deduplicação por
+`(osm_type, osm_id)`, upsert e renovação de `last_synced_at`. O Street
+View é opcional: sem `GOOGLE_MAPS_API_KEY` a metadata retorna
+`NOT_CONFIGURED` e o componente não é renderizado.
 
 ## 6. Frontend mobile (aplicativo)
 
@@ -415,10 +444,16 @@ opcional no runtime e a API degrada sem ele. Fila assíncrona
 
 Cada interação relevante --- clique no card, abertura do restaurante,
 adição ao carrinho e pedido concluído --- é enviada ao backend via
-`POST /events`.
+`POST /events`. O comportamento que alimenta o recomendador também é
+registrado em `POST /interactions` (`VIEW`, `CLICK`, `FAVORITE` ou
+`PURCHASE`); compras usam `idempotency_key` para não duplicar o evento e
+só são registradas na confirmação do pedido.
 
 Esses eventos são a **matéria-prima** para o treinamento do modelo,
-seguindo o princípio de aprender com cliques e compras.
+seguindo o princípio de aprender com cliques e compras. A descoberta de
+restaurantes no OpenStreetMap é separada do catálogo próprio: o detalhe
+persiste o estabelecimento pelo par `(osm_type, osm_id)` na primeira
+abertura e reutiliza a mesma tela de detalhes.
 
 ## 7. MLOps / LLMOps
 
@@ -445,11 +480,20 @@ alto impacto**, o projeto separa o que já existe do que é evolução.
     Redis, seed, endpoints e o volume `backend_models`. O workflow
     `.github/workflows/compose-validation.yml` executa o script em um
     runner com Docker.
--   **Experimento A/B:** atribuição estável por SHA-256 entre feed
-    personalizado e feed por distância, com resultados em
-    `/api/v1/experiment/ab-test`.
--   **Testes automatizados:** backend com pytest (102 testes), frontend
-    web com lint/build/testes e mobile com `tsc --noEmit`.
+-   **Experimento A/B:** atribuição versionada e persistente em
+    `experiment_assignments` entre três grupos — `baseline`
+    (popularidade), `personalized` (LightGBM + afinidade) e `distance`.
+    As métricas (impressões, CTR, detalhes, favoritos, conversão,
+    descartes) vêm de `user_restaurant_interactions`, não de
+    contadores Redis. Eventos com `experiment_mode='demo'` são
+    excluídos. `/api/v1/experiment/ab-test` informa a fase
+    (`collecting`, `insufficient_data`, `ready` ou
+    `statistical_analysis`); `ready` não é significância. A análise
+    inferencial usa intervalo de Wilson e teste z com correção de
+    Bonferroni, além de detectar contaminação entre grupos.
+-   **Testes automatizados:** backend com pytest (227 testes),
+    frontend web com lint/build/testes (206 testes) e mobile com
+    `tsc --noEmit`.
 
 **Planejado / não implementado:**
 
