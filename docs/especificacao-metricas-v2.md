@@ -340,14 +340,17 @@ impressão como **fallback**, sem IC bootstrap, com a limitação registrada em
 A inferência é sempre contra o grupo `baseline`. **Sem baseline com impressões e
 usuários mínimos na coorte válida, a análise estatística permanece
 indisponível**, mesmo que dois grupos variantes tenham volume. O relatório
-expõe `baseline_ready` e `comparison_groups` (apenas grupos com impressões).
+expõe `baseline_ready` e `comparison_groups` (apenas grupos com impressões);
+`ready_comparison_groups` lista o subconjunto que atinge o volume mínimo e
+entra efetivamente nas comparações.
 
 Comparações planejadas: 2 métricas (`ctr`, `conversion_rate`) × cada grupo
-comparável (`personalized`, `distance`) contra `baseline`. Com os dois grupos,
+pronto (`personalized`, `distance`) contra `baseline`. Com os dois grupos,
 `m = 4`.
 
 $$
-\alpha_{\text{corrigido}} = \frac{\alpha}{m}, \qquad m = 2 \times |comparison\_groups|
+\alpha_{\text{corrigido}} = \frac{\alpha}{m}, \qquad
+m = 2 \times |ready\_comparison\_groups|
 $$
 
 Significância só é declarada quando `p < alpha_corrigido` **e** o IC 95% da
