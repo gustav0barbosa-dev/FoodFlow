@@ -2,12 +2,19 @@
 
 import { restaurants as mockRestaurants } from '@/data/mockData'
 import type {
+  ApiMenuItem,
   ApiRestaurant,
   ApiRestaurantDetail,
   ApiReview,
 } from '@/lib/api'
 import { categoryLabel } from '@/lib/osm'
-import type { Restaurant, RestaurantSource, Review } from '@/types'
+import type {
+  DietaryPreference,
+  MenuItem,
+  Restaurant,
+  RestaurantSource,
+  Review,
+} from '@/types'
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&h=400&fit=crop'
@@ -25,7 +32,31 @@ function osmTypeOf(
 }
 
 function sourceOf(value: string | null | undefined): RestaurantSource {
-  return value === 'osm' ? 'osm' : 'foodflow'
+  if (value === 'osm') return 'osm'
+  if (value === 'synthetic') return 'synthetic'
+  return 'foodflow'
+}
+
+export function mapApiMenuItem(item: ApiMenuItem): MenuItem {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description ?? '',
+    price: item.price,
+    image: item.image_url ?? FALLBACK_IMAGE,
+    section: item.section,
+    dietaryTags: (item.dietary_tags ?? []) as DietaryPreference[],
+    source: item.source,
+  }
+}
+
+/** Substitui o cardápio do restaurante pelos itens vindos do endpoint. */
+export function withApiMenu(
+  restaurant: Restaurant,
+  items: ApiMenuItem[]
+): Restaurant {
+  if (items.length === 0) return restaurant
+  return { ...restaurant, menu: items.map(mapApiMenuItem) }
 }
 
 export function formatReviewDate(value: string): string {
@@ -91,7 +122,9 @@ export function mapApiRestaurant(
     }
   }
 
-  const mock = mockByName.get(restaurant.name)
+  // Restaurantes sintéticos não usam o catálogo mock: o cardápio vem do
+  // endpoint /restaurants/{id}/menu e é identificado por source="synthetic".
+  const mock = source === 'foodflow' ? mockByName.get(restaurant.name) : undefined
 
   return {
     id: restaurant.id,
@@ -107,7 +140,10 @@ export function mapApiRestaurant(
     address: restaurant.address,
     phone: restaurant.phone ?? mock?.phone ?? '',
     tags: mock?.tags ?? [],
-    dietaryTags: mock?.dietaryTags ?? [],
+    dietaryTags:
+      restaurant.dietary_tags && restaurant.dietary_tags.length > 0
+        ? (restaurant.dietary_tags as DietaryPreference[])
+        : mock?.dietaryTags ?? [],
     isRecommended,
     menu: mock?.menu ?? [],
     reviews: [],
@@ -119,12 +155,14 @@ export function mapApiRestaurant(
 
 export function mapApiRestaurantDetail(
   detail: ApiRestaurantDetail,
-  isRecommended = false
+  isRecommended = false,
+  menu?: ApiMenuItem[]
 ): Restaurant {
-  return {
+  const mapped = {
     ...mapApiRestaurant(detail, isRecommended),
     reviews: detail.reviews.map(mapApiReview),
   }
+  return menu && menu.length > 0 ? withApiMenu(mapped, menu) : mapped
 }
 
 /** Mapeia os IDs do catálogo mock para os UUIDs devolvidos pela API. */

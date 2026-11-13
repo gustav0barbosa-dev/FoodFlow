@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  mapApiMenuItem,
   mapApiReview,
   mapApiRestaurant,
   mapApiRestaurantDetail,
+  withApiMenu,
   buildCatalogIdMap,
   buildLegacyIdMap,
 } from '@/lib/catalog'
-import type { ApiRestaurant, ApiReview } from '@/lib/api'
+import type { ApiMenuItem, ApiRestaurant, ApiReview } from '@/lib/api'
 
 const apiRestaurant: ApiRestaurant = {
   id: 'api-uuid-1',
@@ -36,6 +38,18 @@ const apiReview: ApiReview = {
   rating: 5,
   comment: 'Excelente comida!',
   created_at: '2026-10-28T19:30:00Z',
+}
+
+const apiMenuItem: ApiMenuItem = {
+  id: 'menu-uuid-1',
+  section: 'Pizzas',
+  name: 'Pizza Margherita',
+  description: 'Molho, mussarela e manjericão.',
+  price: 49.9,
+  image_url: null,
+  dietary_tags: ['Vegetariano'],
+  is_available: true,
+  source: 'synthetic',
 }
 
 describe('catalog mappers', () => {
@@ -100,6 +114,49 @@ describe('catalog mappers', () => {
     expect(detail.reviews).toHaveLength(1)
     expect(detail.reviews[0].userName).toBe('Ana Souza')
     expect(detail.reviews[0].rating).toBe(5)
+  })
+
+  it('mapeia item de cardápio e preserva a origem sintética', () => {
+    const item = mapApiMenuItem(apiMenuItem)
+
+    expect(item.id).toBe('menu-uuid-1')
+    expect(item.section).toBe('Pizzas')
+    expect(item.price).toBe(49.9)
+    expect(item.dietaryTags).toEqual(['Vegetariano'])
+    expect(item.source).toBe('synthetic')
+    expect(item.image).not.toBe('')
+  })
+
+  it('substitui o cardápio pelo endpoint quando há itens', () => {
+    const restaurant = withApiMenu(
+      mapApiRestaurant({ ...apiRestaurant, source: 'synthetic' }),
+      [apiMenuItem]
+    )
+
+    expect(restaurant.menu).toHaveLength(1)
+    expect(restaurant.menu[0].name).toBe('Pizza Margherita')
+    expect(restaurant.menu[0].source).toBe('synthetic')
+  })
+
+  it('não enriquece restaurante sintético com o catálogo mock', () => {
+    const restaurant = mapApiRestaurant({
+      ...apiRestaurant,
+      source: 'synthetic',
+    })
+
+    expect(restaurant.source).toBe('synthetic')
+    expect(restaurant.menu).toEqual([])
+  })
+
+  it('passa o cardápio do endpoint no detalhe', () => {
+    const detail = mapApiRestaurantDetail(
+      { ...apiDetail, reviews: [] },
+      false,
+      [apiMenuItem]
+    )
+
+    expect(detail.menu).toHaveLength(1)
+    expect(detail.menu[0].source).toBe('synthetic')
   })
 
   it('não enriquece restaurantes do OSM com dados do catálogo mock', () => {

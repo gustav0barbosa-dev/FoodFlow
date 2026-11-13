@@ -4,6 +4,12 @@ export interface MenuItem {
   description: string
   price: number
   image: string
+  /** Seção do cardápio (ex.: "Pizzas", "Bebidas"). */
+  section?: string
+  /** Rótulos dietéticos do item. */
+  dietaryTags?: DietaryPreference[]
+  /** "synthetic" = item de exemplo; um cardápio real usa outro valor. */
+  source?: string
 }
 
 export interface Review {
@@ -24,7 +30,7 @@ export const DIETARY_PREFERENCES = [
 
 export type DietaryPreference = (typeof DIETARY_PREFERENCES)[number]
 
-export type RestaurantSource = 'foodflow' | 'osm'
+export type RestaurantSource = 'foodflow' | 'osm' | 'synthetic'
 
 export interface Restaurant {
   id: string

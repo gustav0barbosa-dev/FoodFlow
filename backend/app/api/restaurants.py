@@ -11,6 +11,7 @@ from app.integrations.overpass_client import (
     OverpassTimeoutError,
 )
 from app.schemas import (
+    MenuItemOut,
     NearbyCategory,
     NearbyRestaurantsOut,
     RestaurantDetailOut,
@@ -119,6 +120,18 @@ async def get_osm_restaurant(
     payload = RestaurantOut.model_validate(restaurant).model_dump()
     payload["reviews"] = []
     return RestaurantDetailOut(**payload)
+
+
+@router.get("/{restaurant_id}/menu", response_model=list[MenuItemOut])
+async def get_restaurant_menu(
+    restaurant_id: UUID,
+    session: AsyncSession = Depends(get_db),
+):
+    """Cardápio do restaurante (lista vazia se ainda não houver itens)."""
+    restaurant = await crud.get_restaurant(session, restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="Restaurante não encontrado")
+    return await crud.get_menu_items(session, restaurant_id)
 
 
 @router.get("/{restaurant_id}", response_model=RestaurantDetailOut)

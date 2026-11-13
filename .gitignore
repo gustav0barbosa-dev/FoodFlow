@@ -72,3 +72,5 @@ yarn-error.log*
 upload_model.py
 
 docs/relatorio-final.md
+# Logs de simulação (dados sintéticos)
+backend/sim_runs/

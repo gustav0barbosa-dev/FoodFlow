@@ -53,6 +53,18 @@ export interface ApiRestaurantDetail extends ApiRestaurant {
   reviews: ApiReview[]
 }
 
+export interface ApiMenuItem {
+  id: string
+  section: string
+  name: string
+  description: string | null
+  price: number
+  image_url: string | null
+  dietary_tags: string[]
+  is_available: boolean
+  source: string
+}
+
 export interface ApiRecommendation extends ApiRestaurant {
   score: number
 }
@@ -172,6 +184,11 @@ export function searchRestaurants({
 
 export function getRestaurant(id: string): Promise<ApiRestaurantDetail> {
   return request<ApiRestaurantDetail>(`/restaurants/${id}`)
+}
+
+/** Cardápio do restaurante (itens sintéticos ou reais, conforme `source`). */
+export function getRestaurantMenu(id: string): Promise<ApiMenuItem[]> {
+  return request<ApiMenuItem[]>(`/restaurants/${id}/menu`)
 }
 
 /**

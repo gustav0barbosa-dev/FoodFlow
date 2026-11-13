@@ -14,7 +14,7 @@ import { useEventsStore } from '@/store/eventsStore'
 import { useReviewsStore } from '@/store/reviewsStore'
 import { useCatalogStore } from '@/store/catalogStore'
 import { useCatalog } from '@/hooks/useCatalog'
-import { deleteReview, getOsmRestaurant, getRestaurant } from '@/lib/api'
+import { deleteReview, getOsmRestaurant, getRestaurant, getRestaurantMenu } from '@/lib/api'
 import { buildCatalogIdMap, mapApiRestaurantDetail } from '@/lib/catalog'
 import { trackInteraction } from '@/lib/interactions'
 import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@/lib/osm'
@@ -129,13 +129,17 @@ export function RestaurantDetail() {
     }
 
     setDetailLoading(true)
-    getRestaurant(resolvedId)
-      .then((apiDetail) => {
+    Promise.all([
+      getRestaurant(resolvedId),
+      // Cardápio separado do restaurante; falha de cardápio não derruba a tela.
+      getRestaurantMenu(resolvedId).catch(() => []),
+    ])
+      .then(([apiDetail, menu]) => {
         if (!active) return
         const isRecommended = useCatalogStore
           .getState()
           .recommendedIds.includes(resolvedId)
-        setDetail(mapApiRestaurantDetail(apiDetail, isRecommended))
+        setDetail(mapApiRestaurantDetail(apiDetail, isRecommended, menu))
       })
       .catch(() => {
         if (active) setDetail(cached ?? null)
@@ -446,22 +450,30 @@ export function RestaurantDetail() {
         <div className="mt-3">
           {activeTab === 'menu' &&
             (restaurant.menu.length > 0 ? (
-              <div
-                className={cn(
-                  // Mobile: lista vertical.
-                  'space-y-2',
-                  // Tablet/Desktop: grid de 2 colunas.
-                  'sm:grid sm:grid-cols-2 sm:gap-3'
+              <div>
+                {restaurant.menu.some((item) => item.source === 'synthetic') && (
+                  <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                    Cardápio de exemplo (sintético): os itens não representam o
+                    cardápio real do estabelecimento.
+                  </p>
                 )}
-              >
-                {restaurant.menu.map((item) => (
-                  <MenuItem
-                    key={item.id}
-                    item={item}
-                    restaurantId={restaurant.id}
-                    restaurantName={restaurant.name}
-                  />
-                ))}
+                <div
+                  className={cn(
+                    // Mobile: lista vertical.
+                    'space-y-2',
+                    // Tablet/Desktop: grid de 2 colunas.
+                    'sm:grid sm:grid-cols-2 sm:gap-3'
+                  )}
+                >
+                  {restaurant.menu.map((item) => (
+                    <MenuItem
+                      key={item.id}
+                      item={item}
+                      restaurantId={restaurant.id}
+                      restaurantName={restaurant.name}
+                    />
+                  ))}
+                </div>
               </div>
             ) : (
               <p className="text-xs text-ink-soft text-center py-4">

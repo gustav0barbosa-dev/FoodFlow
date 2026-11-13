@@ -69,6 +69,9 @@ class Restaurant(Base):
     dietary_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
     # Última sincronização bem-sucedida com a fonte externa (OSM).
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Run de simulação que criou o registro (nulo para dados reais). Permite
+    # auditar e limpar restaurantes sintéticos sem tocar no catálogo real.
+    simulation_run_id: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
@@ -82,6 +85,49 @@ class Restaurant(Base):
         Index("idx_restaurants_location", "location", postgresql_using="gist"),
         Index("idx_restaurants_active", "is_active"),
         UniqueConstraint("osm_type", "osm_id", name="uq_restaurants_osm"),
+    )
+
+
+class MenuItem(Base):
+    """Item de cardápio de um restaurante.
+
+    Nenhuma fonte aberta (OSM, Street View) publica cardápios. Por isso os
+    itens criados por ``scripts/enrich_restaurants.py`` têm
+    ``source="synthetic"``: são dados de exemplo plausíveis, não o cardápio
+    real do estabelecimento. Um cardápio real (parceria, cadastro pelo dono)
+    deve usar outro valor de ``source``.
+    """
+
+    __tablename__ = "menu_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    restaurant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("restaurants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    price: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    image_url: Mapped[str | None] = mapped_column(String(500))
+    # Rótulos dietéticos do item (ex.: "Vegetariano"); vazio = não informado.
+    dietary_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    is_available: Mapped[bool] = mapped_column(default=True)
+    source: Mapped[str] = mapped_column(
+        String(20), default="synthetic", server_default="synthetic"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "restaurant_id", "name", name="uq_menu_items_restaurant_name"
+        ),
     )
 
 
@@ -115,6 +161,9 @@ class Order(Base):
     order_value: Mapped[float] = mapped_column(Numeric(8, 2), default=0)
     delivery_fee: Mapped[float] = mapped_column(Numeric(4, 2), default=0)
     status: Mapped[str] = mapped_column(String(30), default="Entregue")
+    # Rastreabilidade de dados sintéticos (nulo para pedidos reais).
+    simulation_run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    simulation_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
@@ -143,6 +192,9 @@ class Review(Base):
     idempotency_key: Mapped[str | None] = mapped_column(
         String(120), unique=True, index=True
     )
+    # Rastreabilidade de dados sintéticos (nulo para avaliações reais).
+    simulation_run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    simulation_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Event,
+    MenuItem,
     Order,
     Restaurant,
     Review,
@@ -367,3 +368,16 @@ async def create_event(
     await session.commit()
     await session.refresh(event)
     return event
+
+
+async def get_menu_items(
+    session: AsyncSession, restaurant_id: UUID
+) -> list[MenuItem]:
+    """Itens disponíveis do cardápio, agrupados por seção."""
+    result = await session.execute(
+        select(MenuItem)
+        .where(MenuItem.restaurant_id == restaurant_id)
+        .where(MenuItem.is_available.is_(True))
+        .order_by(MenuItem.section, MenuItem.name)
+    )
+    return list(result.scalars().all())

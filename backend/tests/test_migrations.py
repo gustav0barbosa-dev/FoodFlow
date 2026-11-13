@@ -9,10 +9,13 @@ from scripts import init_db
 def test_alembic_has_single_current_head() -> None:
     script = ScriptDirectory.from_config(init_db.get_alembic_config())
 
-    assert script.get_heads() == ["0004"]
+    assert script.get_heads() == ["0006"]
     assert script.get_revision("0001").down_revision is None
     assert script.get_revision("0002").down_revision == "0001"
     assert script.get_revision("0003").down_revision == "0002"
+    assert script.get_revision("0004").down_revision == "0003"
+    assert script.get_revision("0005").down_revision == "0004"
+    assert script.get_revision("0006").down_revision == "0005"
 
 
 def test_sync_database_url_converts_asyncpg() -> None:
@@ -47,4 +50,7 @@ def test_initial_migration_renders_full_schema_offline() -> None:
     assert "ALTER TABLE restaurants ADD COLUMN source" in sql
     assert "ADD CONSTRAINT uq_restaurants_osm UNIQUE (osm_type, osm_id)" in sql
     assert "CREATE INDEX idx_interactions_user_created" in sql
+    assert "CREATE TABLE recommendation_logs" in sql
+    assert "ALTER TABLE restaurants ADD COLUMN simulation_run_id" in sql
+    assert "ALTER TABLE orders ADD COLUMN simulation_mode" in sql
     assert "INSERT INTO alembic_version" in sql

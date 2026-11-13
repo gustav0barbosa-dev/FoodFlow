@@ -189,6 +189,21 @@ class ReviewOut(BaseModel):
     created_at: datetime
 
 
+class MenuItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    section: str
+    name: str
+    description: str | None = None
+    price: float
+    image_url: str | None = None
+    dietary_tags: list[str] = Field(default_factory=list)
+    is_available: bool = True
+    # "synthetic" = item de exemplo gerado por script, não o cardápio real.
+    source: str = "synthetic"
+
+
 class RestaurantDetailOut(RestaurantOut):
     reviews: list[ReviewOut] = Field(default_factory=list)
 

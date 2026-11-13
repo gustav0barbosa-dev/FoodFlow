@@ -32,7 +32,14 @@ export function MenuItem({
   return (
     <div className="flex gap-3 py-3 border-b border-gray-100">
       <div className="flex-1">
-        <h4 className="font-medium text-ink">{item.name}</h4>
+        <div className="flex items-center gap-2">
+          <h4 className="font-medium text-ink">{item.name}</h4>
+          {item.source === 'synthetic' && (
+            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+              Exemplo
+            </span>
+          )}
+        </div>
         <p className="text-xs text-ink-soft mt-0.5">{item.description}</p>
         <span className="text-sm font-semibold text-primary mt-1 block">
           {formatBRL(item.price)}
