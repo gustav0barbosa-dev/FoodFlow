@@ -6,6 +6,18 @@ import pytest
 from app.integrations import overpass_client as op
 
 
+@pytest.fixture(autouse=True)
+def retry_delays(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Captura as esperas de retry sem tornar a suíte lenta."""
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(op, "_sleep", fake_sleep)
+    return delays
+
+
 def test_build_query_includes_all_categories_by_default() -> None:
     query = op.build_overpass_query(-23.5505, -46.6333, 3000)
 
@@ -158,6 +170,162 @@ async def test_search_maps_timeout() -> None:
 
     with pytest.raises(op.OverpassTimeoutError):
         await client.search(-23.55, -46.63, 3000)
+
+
+@pytest.mark.parametrize("status", [429, 502, 503])
+async def test_search_retries_transient_http_errors(
+    status: int, retry_delays: list[float]
+) -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(status, text="indisponível")
+        return httpx.Response(
+            200, json={"elements": [{"type": "node", "id": 1}]}
+        )
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    elements = await client.search(-23.55, -46.63, 3000)
+
+    assert elements == [{"type": "node", "id": 1}]
+    assert calls["count"] == 2
+    assert len(retry_delays) == 1
+    assert retry_delays[0] >= op.RETRY_BASE_DELAY_SECONDS
+    assert retry_delays[0] <= op.RETRY_BASE_DELAY_SECONDS * (
+        1 + op.RETRY_JITTER_RATIO
+    )
+
+
+async def test_search_exhausts_retries_for_504(
+    retry_delays: list[float],
+) -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(504, text="gateway timeout")
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(op.OverpassTimeoutError, match="504"):
+        await client.search(-23.55, -46.63, 3000)
+
+    assert calls["count"] == op.MAX_RETRY_ATTEMPTS + 1
+    assert len(retry_delays) == op.MAX_RETRY_ATTEMPTS
+    assert retry_delays[0] >= 5.0
+    assert retry_delays[1] >= 10.0
+    assert retry_delays[2] >= 20.0
+
+
+async def test_search_does_not_retry_permanent_http_errors(
+    retry_delays: list[float],
+) -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(400, text="consulta inválida")
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(op.OverpassError, match="400"):
+        await client.search(-23.55, -46.63, 3000)
+
+    assert calls["count"] == 1
+    assert retry_delays == []
+
+
+async def test_search_respects_retry_after_header(
+    retry_delays: list[float],
+) -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(
+                429, headers={"Retry-After": "7"}, text="limite de uso"
+            )
+        return httpx.Response(200, json={"elements": []})
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    await client.search(-23.55, -46.63, 3000)
+
+    assert calls["count"] == 2
+    assert retry_delays == [7.0]
+
+
+async def test_search_ignores_invalid_retry_after_header(
+    retry_delays: list[float],
+) -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(
+                503, headers={"Retry-After": "em breve"}, text="indisponível"
+            )
+        return httpx.Response(200, json={"elements": []})
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    await client.search(-23.55, -46.63, 3000)
+
+    assert calls["count"] == 2
+    assert len(retry_delays) == 1
+    assert retry_delays[0] >= op.RETRY_BASE_DELAY_SECONDS
+
+
+async def test_search_retries_network_error_then_succeeds(
+    retry_delays: list[float],
+) -> None:
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise httpx.ConnectError("sem rede", request=request)
+        return httpx.Response(
+            200, json={"elements": [{"type": "node", "id": 2}]}
+        )
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    elements = await client.search(-23.55, -46.63, 3000)
+
+    assert elements == [{"type": "node", "id": 2}]
+    assert calls["count"] == 2
+    assert len(retry_delays) == 1
+
+
+async def test_retry_wait_releases_request_semaphore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_semaphore_values: list[int] = []
+
+    async def fake_sleep(_seconds: float) -> None:
+        observed_semaphore_values.append(op._request_semaphore._value)
+
+    monkeypatch.setattr(op, "_sleep", fake_sleep)
+
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(502, text="bad gateway")
+        return httpx.Response(200, json={"elements": []})
+
+    client = op.OverpassClient(transport=httpx.MockTransport(handler))
+
+    await client.search(-23.55, -46.63, 3000)
+
+    assert observed_semaphore_values == [2]
 
 
 async def test_search_raises_when_overpass_reports_runtime_error() -> None:

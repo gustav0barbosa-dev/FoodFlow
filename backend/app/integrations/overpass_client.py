@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -42,6 +45,53 @@ HTTP_TIMEOUT_GRACE_SECONDS = 20
 
 # A instância pública não deve receber muitas consultas simultâneas.
 _request_semaphore = asyncio.Semaphore(2)
+
+# Resiliência a indisponibilidades temporárias da Overpass. A consulta é
+# somente leitura, então repetir é seguro mesmo em timeout/erro de rede.
+RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
+MAX_RETRY_ATTEMPTS = 3
+RETRY_BASE_DELAY_SECONDS = 5.0
+RETRY_MAX_DELAY_SECONDS = 120.0
+RETRY_JITTER_RATIO = 0.25
+
+
+async def _sleep(seconds: float) -> None:
+    """Ponto único de espera, substituível em testes."""
+    await asyncio.sleep(seconds)
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Interpreta ``Retry-After`` em segundos ou como data HTTP."""
+    raw_value = response.headers.get("Retry-After")
+    if raw_value is None:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            logger.debug("Retry-After inválido: %r", raw_value)
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+
+    if seconds < 0:
+        return 0.0
+    return min(seconds, RETRY_MAX_DELAY_SECONDS)
+
+
+def _backoff_delay(retry_number: int) -> float:
+    """Backoff exponencial com jitter para a n-ésima nova tentativa."""
+    base = RETRY_BASE_DELAY_SECONDS * (2 ** (retry_number - 1))
+    jitter = random.uniform(0, base * RETRY_JITTER_RATIO)
+    return min(base + jitter, RETRY_MAX_DELAY_SECONDS)
 
 
 class OverpassError(RuntimeError):
@@ -224,6 +274,47 @@ class OverpassClient:
         )
         return await self._fetch_elements(query)
 
+    async def _wait_before_retry(
+        self,
+        attempt: int,
+        *,
+        response: httpx.Response | None = None,
+        error: OverpassError | None = None,
+    ) -> None:
+        """Aguarda fora do semáforo antes de repetir a consulta."""
+        total_attempts = MAX_RETRY_ATTEMPTS + 1
+        retry_after = (
+            _retry_after_seconds(response) if response is not None else None
+        )
+        delay = (
+            retry_after
+            if retry_after is not None
+            else _backoff_delay(attempt)
+        )
+
+        if response is not None:
+            logger.warning(
+                "Overpass API respondeu %s (tentativa %s/%s); "
+                "nova tentativa em %.1fs%s",
+                response.status_code,
+                attempt,
+                total_attempts,
+                delay,
+                " (Retry-After)" if retry_after is not None else "",
+            )
+        else:
+            logger.warning(
+                "%s (tentativa %s/%s); nova tentativa em %.1fs",
+                error,
+                attempt,
+                total_attempts,
+                delay,
+            )
+
+        # O semáforo já foi liberado ao sair do ``async with`` acima; a espera
+        # não pode bloquear outras consultas.
+        await _sleep(delay)
+
     async def _fetch_elements(self, query: str) -> list[dict[str, Any]]:
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -234,40 +325,69 @@ class OverpassClient:
         timeout = httpx.Timeout(
             self.timeout + HTTP_TIMEOUT_GRACE_SECONDS, connect=10.0
         )
-        try:
-            async with _request_semaphore:
-                async with httpx.AsyncClient(
-                    timeout=timeout, transport=self.transport
-                ) as client:
-                    response = await client.post(
-                        self.url, data={"data": query}, headers=headers
-                    )
-        except httpx.TimeoutException as exc:
-            raise OverpassTimeoutError(
-                "Tempo esgotado ao consultar a Overpass API"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise OverpassError(
-                "Falha de rede ao consultar a Overpass API"
-            ) from exc
+        total_attempts = MAX_RETRY_ATTEMPTS + 1
 
-        if response.status_code == 429:
-            raise OverpassRateLimitError(
-                "Overpass API limitou as requisições (HTTP 429)"
-            )
-        if response.status_code == 504:
-            raise OverpassTimeoutError(
-                "Overpass API excedeu o tempo limite (HTTP 504)"
-            )
-        if response.status_code != 200:
-            logger.warning(
-                "Overpass API respondeu %s: %s",
-                response.status_code,
-                response.text[:200],
-            )
-            raise OverpassError(
-                f"Overpass API respondeu {response.status_code}"
-            )
+        for attempt in range(1, total_attempts + 1):
+            try:
+                async with _request_semaphore:
+                    async with httpx.AsyncClient(
+                        timeout=timeout, transport=self.transport
+                    ) as client:
+                        response = await client.post(
+                            self.url, data={"data": query}, headers=headers
+                        )
+            except httpx.TimeoutException as exc:
+                error = OverpassTimeoutError(
+                    "Tempo esgotado ao consultar a Overpass API"
+                )
+                if attempt < total_attempts:
+                    await self._wait_before_retry(attempt, error=error)
+                    continue
+                raise error from exc
+            except httpx.HTTPError as exc:
+                error = OverpassError(
+                    "Falha de rede ao consultar a Overpass API"
+                )
+                # Só falhas de transporte (conexão, leitura, protocolo) são
+                # potencialmente transitórias; erros de configuração/redirect
+                # não devem ser repetidos.
+                if (
+                    attempt < total_attempts
+                    and isinstance(exc, httpx.TransportError)
+                ):
+                    await self._wait_before_retry(attempt, error=error)
+                    continue
+                raise error from exc
+
+            if (
+                response.status_code in RETRYABLE_STATUS_CODES
+                and attempt < total_attempts
+            ):
+                await self._wait_before_retry(attempt, response=response)
+                continue
+
+            if response.status_code == 429:
+                raise OverpassRateLimitError(
+                    "Overpass API limitou as requisições (HTTP 429) "
+                    f"após {attempt} tentativa(s)"
+                )
+            if response.status_code == 504:
+                raise OverpassTimeoutError(
+                    "Overpass API excedeu o tempo limite (HTTP 504) "
+                    f"após {attempt} tentativa(s)"
+                )
+            if response.status_code != 200:
+                logger.warning(
+                    "Overpass API respondeu %s: %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                raise OverpassError(
+                    f"Overpass API respondeu {response.status_code} "
+                    f"após {attempt} tentativa(s)"
+                )
+
+            break
 
         try:
             body = response.json()
