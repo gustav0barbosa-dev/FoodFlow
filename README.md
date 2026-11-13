@@ -413,6 +413,9 @@ O adaptador LoRA responsável pelo re-ranking personalizado das recomendações 
 
 A especificação completa está em
 [`docs/especificacao-metricas-v2.md`](docs/especificacao-metricas-v2.md).
+
+Relatório técnico dos resultados experimentais:
+[`docs/experiments/relatorio-tecnico-resultados.md`](docs/experiments/relatorio-tecnico-resultados.md).
 Pontos centrais:
 
 - alvo `purchased` (compra observada) e negativos não observados com peso

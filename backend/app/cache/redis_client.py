@@ -41,8 +41,15 @@ async def get_redis() -> redis.Redis:
 async def close_redis() -> None:
     global _redis
     if _redis is not None:
-        await _redis.aclose()
-        _redis = None
+        try:
+            await _redis.aclose()
+        except (RuntimeError, Exception) as exc:  # noqa: BLE001
+            # O event loop pode já estar fechado (ex.: treino via asyncio.run).
+            # Nesse caso apenas descartamos a referência; a conexão será
+            # encerrada pelo coletor de lixo do cliente.
+            logger.debug("Falha ao encerrar Redis (loop fechado?): %s", exc)
+        finally:
+            _redis = None
 
 
 async def get_scores(

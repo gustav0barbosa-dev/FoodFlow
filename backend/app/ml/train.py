@@ -58,6 +58,7 @@ from app.ml.features import (
     build_user_features,
     feature_temporal_policy,
     order_turno,
+    resolve_restaurant_state,
 )
 from app.ml import recommender as recommender_module
 from app.ml.metrics_store import save_training_report
@@ -169,6 +170,7 @@ def build_contexts(
     orders: list[Order],
     restaurants: list[Restaurant],
     interactions: list[UserRestaurantInteraction] | None = None,
+    snapshots: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Reconstrói contextos reais de recomendação sem usar dados futuros.
 
@@ -261,6 +263,7 @@ def build_training_frame(
     negatives_per_positive: int = 0,
     seed: int = RANDOM_SEED,
     interactions: list[UserRestaurantInteraction] | None = None,
+    snapshots: list[Any] | None = None,
 ) -> pd.DataFrame:
     """Gera uma linha por (contexto, candidato) com o rótulo observado.
 
@@ -273,15 +276,23 @@ def build_training_frame(
     todas as estratégias recebam exatamente o mesmo conjunto.
     """
     del negatives_per_positive, seed
-    contexts = build_contexts(users, orders, restaurants, interactions=interactions)
+    contexts = build_contexts(
+        users, orders, restaurants, interactions=interactions, snapshots=snapshots
+    )
     rows: list[dict[str, Any]] = []
     for context in contexts:
         for restaurant in context["candidates"]:
             restaurant_id = str(restaurant.id)
             purchased = 1 if restaurant_id in context["relevant"] else 0
             observed = restaurant_id in context.get("observed", set())
+            state = resolve_restaurant_state(
+                restaurant, snapshots, context["until"]
+            )
             row = build_candidate_features(
-                context["user_features"], restaurant, context["turno"]
+                context["user_features"],
+                restaurant,
+                context["turno"],
+                restaurant_state=state,
             )
             row.update(
                 {
@@ -1126,6 +1137,64 @@ def _fit_and_evaluate(
         y_validation.tolist(), validation_scores
     )
 
+    # Calibração: ajusta Platt Scaling e Isotonic Regression na validação e
+    # escolhe o método com menor Brier Score. Se não houver validação suficiente,
+    # mantém "none" (probabilidades brutas).
+    calibrator = None
+    calibration_method = "none"
+    try:
+        import numpy as np
+        from sklearn.isotonic import IsotonicRegression
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.metrics import brier_score_loss
+
+        y_val_arr = np.asarray(y_validation.tolist(), dtype=int)
+        scores_val_arr = np.asarray(validation_scores, dtype=float)
+        if (
+            len(y_val_arr) >= 10
+            and len(np.unique(y_val_arr)) == 2
+            and len(scores_val_arr) == len(y_val_arr)
+        ):
+            # Platt
+            platt = LogisticRegression()
+            platt.fit(scores_val_arr.reshape(-1, 1), y_val_arr)
+            platt_scores = platt.predict_proba(scores_val_arr.reshape(-1, 1))[:, 1]
+            platt_brier = brier_score_loss(y_val_arr, platt_scores)
+
+            # Isotonic
+            iso = IsotonicRegression(out_of_bounds="clip")
+            iso.fit(scores_val_arr, y_val_arr)
+            iso_scores = iso.predict(scores_val_arr)
+            iso_brier = brier_score_loss(y_val_arr, iso_scores)
+
+            if iso_brier < platt_brier:
+                calibrator = iso
+                calibration_method = "isotonic"
+            else:
+                calibrator = platt
+                calibration_method = "platt"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Falha ao ajustar calibração: %s", exc)
+        calibrator = None
+        calibration_method = "none"
+
+    # Métricas calibradas no teste (diagnóstico antes/depois).
+    calibrated_test_scores: list[float] = []
+    if calibrator is not None and len(test_scores):
+        try:
+            import numpy as np
+
+            arr = np.asarray(test_scores, dtype=float)
+            if calibration_method == "platt":
+                calibrated_test_scores = calibrator.predict_proba(
+                    arr.reshape(-1, 1)
+                )[:, 1].tolist()
+            else:
+                calibrated_test_scores = calibrator.predict(arr).tolist()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Falha ao calibrar scores de teste: %s", exc)
+            calibrated_test_scores = []
+
     metrics = {
         "samples": int(len(frame)),
         "positives": int(y.sum()),
@@ -1167,6 +1236,12 @@ def _fit_and_evaluate(
         "brier_score": test_predictive["brier_score"],
         "log_loss": test_predictive["log_loss"],
         "calibration": test_predictive["calibration"],
+        "calibration_method": calibration_method,
+        "calibrated_predictive": (
+            _predictive_metrics(y_test.tolist(), calibrated_test_scores)
+            if calibrated_test_scores
+            else None
+        ),
         "predictive_notes": test_predictive["predictive_notes"],
         "validation_roc_auc": validation_predictive["roc_auc"],
         "test_roc_auc": test_predictive["roc_auc"],
@@ -1198,7 +1273,7 @@ def _fit_and_evaluate(
             ),
         },
     }
-    return model, metrics
+    return model, metrics, calibrator, calibration_method
 
 
 def rolling_window_evaluation(
@@ -1740,6 +1815,8 @@ def _build_report(
             "brier_score": metrics["brier_score"],
             "log_loss": metrics["log_loss"],
             "calibration": metrics.get("calibration"),
+            "calibration_method": metrics.get("calibration_method"),
+            "calibrated_predictive": metrics.get("calibrated_predictive"),
             "predictive_notes": metrics.get("predictive_notes") or {},
             "validation_roc_auc": metrics["validation_roc_auc"],
             "test_roc_auc": metrics["test_roc_auc"],
@@ -1762,6 +1839,8 @@ def _save_candidate(
     columns: list[str],
     metadata: dict[str, Any],
     model_version: str,
+    calibrator: Any = None,
+    calibration_method: str = "none",
 ) -> Path:
     candidates_dir = _model_path().parent / "candidates"
     candidates_dir.mkdir(parents=True, exist_ok=True)
@@ -1774,6 +1853,8 @@ def _save_candidate(
                 "trained_at": datetime.now(timezone.utc).isoformat(),
                 **metadata,
             },
+            "calibrator": calibrator,
+            "calibration_method": calibration_method,
         },
         path,
     )
@@ -1799,11 +1880,12 @@ def _train_and_save(
     orders: list[Order],
     restaurants: list[Restaurant],
     interactions: list[UserRestaurantInteraction] | None = None,
+    snapshots: list[Any] | None = None,
     strict_temporal: bool = False,
     rolling_window: bool = False,
 ) -> dict[str, Any] | None:
     frame = build_training_frame(
-        users, orders, restaurants, interactions=interactions
+        users, orders, restaurants, interactions=interactions, snapshots=snapshots
     )
     if frame.empty:
         logger.warning("Dataset vazio; modelo não será treinado.")
@@ -1812,7 +1894,7 @@ def _train_and_save(
     dataset_hash = _dataset_hash(frame)
     columns = feature_columns(frame)
     try:
-        model, metrics = _fit_and_evaluate(
+        model, metrics, calibrator, calibration_method = _fit_and_evaluate(
             frame,
             orders=orders,
             catalog_size=len(restaurants),
@@ -1874,7 +1956,9 @@ def _train_and_save(
         "model_version": version,
         "dataset_hash": dataset_hash,
     }
-    candidate_path = _save_candidate(model, columns, metadata, version)
+    candidate_path = _save_candidate(
+        model, columns, metadata, version, calibrator, calibration_method
+    )
     quality = _quality_assessment(metrics, metrics["split"]["strategy"])
     if source == "seed" and previous is not None:
         # Seed é dado sintético/demonstrativo. Ele pode inicializar um modelo
@@ -1904,7 +1988,13 @@ def _train_and_save(
         archived = _archive_previous(previous)
         if archived is not None:
             promotion["archived_previous_path"] = str(archived)
-        recommender.save(model, columns, metadata=metadata)
+        recommender.save(
+            model,
+            columns,
+            metadata=metadata,
+            calibrator=calibrator,
+            calibration_method=calibration_method,
+        )
         logger.info("Modelo %s promovido para produção.", version)
     else:
         logger.info(
@@ -1939,14 +2029,26 @@ async def load_training_data(
     list[Order],
     list[Restaurant],
     list[UserRestaurantInteraction],
+    list[Any],
 ]:
+    from app.models import RestaurantSnapshot
+
     users = (await session.execute(select(User))).scalars().all()
     orders = (await session.execute(select(Order))).scalars().all()
     restaurants = (await session.execute(select(Restaurant))).scalars().all()
     interactions = (
         (await session.execute(select(UserRestaurantInteraction))).scalars().all()
     )
-    return list(users), list(orders), list(restaurants), list(interactions)
+    snapshots = (
+        (await session.execute(select(RestaurantSnapshot))).scalars().all()
+    )
+    return (
+        list(users),
+        list(orders),
+        list(restaurants),
+        list(interactions),
+        list(snapshots),
+    )
 
 
 def _stable_id(value: str) -> uuid.UUID:
@@ -2052,7 +2154,9 @@ async def train(
     *, strict_temporal: bool = False, rolling_window: bool = False
 ) -> dict[str, Any] | None:
     async with AsyncSessionLocal() as session:
-        users, orders, restaurants, interactions = await load_training_data(session)
+        users, orders, restaurants, interactions, snapshots = await load_training_data(
+            session
+        )
 
     result = _train_and_save(
         source="database",
@@ -2060,6 +2164,7 @@ async def train(
         orders=orders,
         restaurants=restaurants,
         interactions=interactions,
+        snapshots=snapshots,
         strict_temporal=strict_temporal,
         rolling_window=rolling_window,
     )
@@ -2072,7 +2177,7 @@ async def train(
         from app.services.drift import drift_monitor  # evita import circular
 
         frame = build_training_frame(
-            users, orders, restaurants, interactions=interactions
+            users, orders, restaurants, interactions=interactions, snapshots=snapshots
         )
         for feature in drift_monitor.feature_names:
             if feature in frame.columns:
@@ -2080,6 +2185,15 @@ async def train(
                 await drift_monitor.save_baseline(feature, values)
     except Exception as exc:  # não deve falhar o treino por causa do drift
         logger.warning("Falha ao salvar baseline de drift: %s", exc)
+
+    # Encerra o cliente Redis antes do fechamento do event loop (evita o aviso
+    # "Event loop is closed" em redis.asyncio.connection.AbstractConnection).
+    try:
+        from app.cache.redis_client import close_redis
+
+        await close_redis()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Falha ao encerrar Redis após o treino: %s", exc)
 
     return result
 

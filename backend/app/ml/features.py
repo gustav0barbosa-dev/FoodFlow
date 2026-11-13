@@ -371,22 +371,104 @@ def _restaurant_counts(
     )
 
 
+def resolve_restaurant_state(
+    restaurant: Restaurant,
+    snapshots: list[Any] | None = None,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Resolve o estado mutável do restaurante em ``as_of``.
+
+    Usa o snapshot válido (``valid_from <= as_of < valid_to``) mais recente;
+    se não houver, cai no estado atual do restaurante. O resultado é um dict
+    com as chaves ``average_rating``, ``review_count``, ``delivery_fee``,
+    ``delivery_time_min`` e ``delivery_time_max``.
+    """
+    current = {
+        "average_rating": getattr(restaurant, "average_rating", 0),
+        "review_count": getattr(restaurant, "review_count", 0),
+        "delivery_fee": getattr(restaurant, "delivery_fee", 0),
+        "delivery_time_min": getattr(restaurant, "delivery_time_min", 20),
+        "delivery_time_max": getattr(restaurant, "delivery_time_max", 30),
+    }
+    if not snapshots or as_of is None:
+        return current
+
+    restaurant_id = getattr(restaurant, "id", None)
+    candidates = [
+        snapshot
+        for snapshot in snapshots
+        if getattr(snapshot, "restaurant_id", None) == restaurant_id
+        or (isinstance(snapshot, dict) and snapshot.get("restaurant_id") == restaurant_id)
+    ]
+    chosen = None
+    for snapshot in candidates:
+        valid_from = (
+            snapshot.get("valid_from")
+            if isinstance(snapshot, dict)
+            else getattr(snapshot, "valid_from", None)
+        )
+        valid_to = (
+            snapshot.get("valid_to")
+            if isinstance(snapshot, dict)
+            else getattr(snapshot, "valid_to", None)
+        )
+        if valid_from is None:
+            continue
+        valid_from_utc = _as_utc(valid_from)
+        if valid_from_utc > _as_utc(as_of):
+            continue
+        if valid_to is not None and _as_utc(valid_to) <= _as_utc(as_of):
+            continue
+        if chosen is None:
+            chosen = snapshot
+        else:
+            chosen_from = (
+                chosen.get("valid_from")
+                if isinstance(chosen, dict)
+                else getattr(chosen, "valid_from", None)
+            )
+            if _as_utc(valid_from) > _as_utc(chosen_from):
+                chosen = snapshot
+
+    if chosen is None:
+        return current
+
+    def _get(key: str, default):
+        if isinstance(chosen, dict):
+            return chosen.get(key, default)
+        return getattr(chosen, key, default)
+
+    return {
+        "average_rating": _get("average_rating", current["average_rating"]),
+        "review_count": _get("review_count", current["review_count"]),
+        "delivery_fee": _get("delivery_fee", current["delivery_fee"]),
+        "delivery_time_min": _get("delivery_time_min", current["delivery_time_min"]),
+        "delivery_time_max": _get("delivery_time_max", current["delivery_time_max"]),
+    }
+
+
 def build_candidate_features(
     user_features: dict[str, Any],
     restaurant: Restaurant,
     turno: Turno = "tarde",
+    restaurant_state: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     """Monta a linha (usuário, restaurante, turno) usada no treino e no serving."""
+    state = restaurant_state or resolve_restaurant_state(restaurant, None, None)
     row: dict[str, float] = {
         "total_orders": float(user_features.get("total_orders", 0.0)),
         "has_dietary_preferences": float(
             user_features.get("has_dietary_preferences", 0.0)
         ),
-        "restaurant_rating": float(restaurant.average_rating or 0.0),
-        "restaurant_review_count": float(restaurant.review_count or 0),
-        "restaurant_delivery_fee": float(restaurant.delivery_fee or 0.0),
+        "restaurant_rating": float(state.get("average_rating", 0.0) or 0.0),
+        "restaurant_review_count": float(state.get("review_count", 0) or 0),
+        "restaurant_delivery_fee": float(state.get("delivery_fee", 0.0) or 0.0),
         "restaurant_delivery_time_avg": float(
-            (restaurant.delivery_time_min + restaurant.delivery_time_max) / 2
+            (
+                float(state.get("delivery_time_min", 0) or 0)
+                + float(state.get("delivery_time_max", 0) or 0)
+            )
+            / 2
         ),
         "interaction_count": float(user_features.get("interaction_count", 0.0)),
         "impression_count": float(user_features.get("impression_count", 0.0)),

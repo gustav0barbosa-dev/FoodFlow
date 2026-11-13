@@ -88,6 +88,48 @@ class Restaurant(Base):
     )
 
 
+class RestaurantSnapshot(Base):
+    """Snapshot histórico dos atributos mutáveis de um restaurante.
+
+    Registra o estado de ``average_rating``, ``review_count``, ``delivery_fee``
+    e tempo de entrega em um instante, permitindo que o treinamento e a
+    avaliação usem o estado que o restaurante possuía em ``until`` em vez do
+    estado atual (evitando vazamento temporal). Quando não há snapshot para o
+    instante, o estado atual do restaurante é usado como fallback explícito.
+    """
+
+    __tablename__ = "restaurant_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    restaurant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("restaurants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    average_rating: Mapped[float] = mapped_column(Numeric(2, 1), default=0)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+    delivery_fee: Mapped[float] = mapped_column(Numeric(4, 2), default=0)
+    delivery_time_min: Mapped[int] = mapped_column(Integer, default=20)
+    delivery_time_max: Mapped[int] = mapped_column(Integer, default=30)
+    source: Mapped[str] = mapped_column(
+        String(20), default="current", server_default="current"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_restaurant_snapshots_restaurant_valid_from", "restaurant_id", "valid_from"),
+    )
+
+
 class MenuItem(Base):
     """Item de cardápio de um restaurante.
 

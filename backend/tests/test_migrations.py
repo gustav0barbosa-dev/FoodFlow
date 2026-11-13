@@ -9,13 +9,14 @@ from scripts import init_db
 def test_alembic_has_single_current_head() -> None:
     script = ScriptDirectory.from_config(init_db.get_alembic_config())
 
-    assert script.get_heads() == ["0006"]
+    assert script.get_heads() == ["0007"]
     assert script.get_revision("0001").down_revision is None
     assert script.get_revision("0002").down_revision == "0001"
     assert script.get_revision("0003").down_revision == "0002"
     assert script.get_revision("0004").down_revision == "0003"
     assert script.get_revision("0005").down_revision == "0004"
     assert script.get_revision("0006").down_revision == "0005"
+    assert script.get_revision("0007").down_revision == "0006"
 
 
 def test_sync_database_url_converts_asyncpg() -> None:

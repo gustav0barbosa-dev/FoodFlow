@@ -61,8 +61,7 @@ python scripts/simulate.py live --run-id exp1 --rounds 5 --dry-run
 python scripts/simulate.py live --run-id exp1 --rounds 5 --yes
 
 # 6. Generalização: usuários inéditos (não vistos no treino)
-python scripts/simulate.py live --run-id exp1-unseen --unseen-users \
-    --rounds 5 --yes
+python scripts/simulate.py live --run-id exp1-unseen --unseen-users --rounds 5 --yes
 
 # 7. Relatório: ordenação, seleção e coortes
 python scripts/simulate.py report --run-id exp1 --by-cohort --by-persona

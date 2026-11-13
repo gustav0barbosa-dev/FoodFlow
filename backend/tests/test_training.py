@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -9,8 +10,8 @@ from app.ml import recommender as recommender_module
 from app.ml import train as train_module
 from app.ml.features import (
     CURRENT_STATE_RESTAURANT_FEATURES,
-    build_user_features,
-)
+    build_candidate_features,
+    build_user_features,)
 from app.ml.recommender import Recommender
 from app.ml.train import (
     InsufficientTrainingDataError,
@@ -111,7 +112,7 @@ def test_fit_and_evaluate_returns_metrics() -> None:
     users, orders, restaurants = build_fixture()
     frame = build_training_frame(users, orders, restaurants, seed=7)
 
-    model, metrics = _fit_and_evaluate(frame)
+    model, metrics, _, _ = _fit_and_evaluate(frame)
 
     assert metrics["samples"] == len(frame)
     assert metrics["features"] > 0
@@ -123,7 +124,7 @@ def test_recommender_roundtrip_and_prediction(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(recommender_module, "MODEL_PATH", tmp_path / "model.joblib")
     users, orders, restaurants = build_fixture()
     frame = build_training_frame(users, orders, restaurants, seed=7)
-    model, _ = _fit_and_evaluate(frame)
+    model, _, _, _ = _fit_and_evaluate(frame)
     columns = feature_columns(frame)
 
     recommender = Recommender()
@@ -138,6 +139,36 @@ def test_recommender_roundtrip_and_prediction(tmp_path, monkeypatch) -> None:
 
     assert set(scores) == {str(restaurant.id) for restaurant in restaurants}
     assert all(0.0 <= score <= 1.0 for score in scores.values())
+
+
+def test_training_inference_consistency(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(recommender_module, "MODEL_PATH", tmp_path / "model.joblib")
+    users, orders, restaurants = build_fixture()
+    frame = build_training_frame(users, orders, restaurants, seed=7)
+    model, _, calibrator, calibration_method = _fit_and_evaluate(frame)
+    columns = feature_columns(frame)
+
+    recommender = Recommender()
+    recommender.save(
+        model, columns, calibrator=calibrator, calibration_method=calibration_method
+    )
+    loaded = Recommender()
+    assert loaded.load() is True
+
+    user = users[0]
+    user_orders = [order for order in orders if order.user_id == user.id]
+    user_features = build_user_features(user_orders, user, restaurants=restaurants)
+
+    rows = [build_candidate_features(user_features, restaurant, "tarde") for restaurant in restaurants]
+    serving_frame = pd.DataFrame(rows).reindex(columns=columns, fill_value=0.0)
+    serving_frame = serving_frame.fillna(0.0).astype(float)
+
+    expected = model.predict_proba(serving_frame)[:, 1]
+    actual = loaded.model.predict_proba(serving_frame)[:, 1]
+    assert np.allclose(expected, actual)
+
+    if loaded.calibrator is not None and loaded.calibration_method != "none":
+        assert loaded.calibration_method in {"platt", "isotonic"}
 
 
 def test_build_seed_entities_is_deterministic() -> None:
@@ -215,10 +246,10 @@ def test_dataset_hash_and_metrics_are_reproducible() -> None:
     assert _dataset_hash(first) == _dataset_hash(second)
     assert list(first.columns) == list(second.columns)
 
-    _, first_metrics = _fit_and_evaluate(
+    _, first_metrics, _, _ = _fit_and_evaluate(
         first, orders=orders, catalog_size=len(restaurants)
     )
-    _, second_metrics = _fit_and_evaluate(
+    _, second_metrics, _, _ = _fit_and_evaluate(
         second, orders=orders, catalog_size=len(restaurants)
     )
 
@@ -242,7 +273,7 @@ def test_training_rejects_dataset_without_both_classes() -> None:
 def test_all_strategies_receive_the_same_candidates() -> None:
     users, orders, restaurants = build_fixture()
     frame = build_training_frame(users, orders, restaurants)
-    _, metrics = _fit_and_evaluate(
+    _, metrics, _, _ = _fit_and_evaluate(
         frame, orders=orders, catalog_size=len(restaurants)
     )
 
@@ -488,7 +519,7 @@ def test_strict_temporal_excludes_current_state_features() -> None:
     users, orders, restaurants = build_fixture()
     frame = build_training_frame(users, orders, restaurants, seed=7)
 
-    _, metrics = _fit_and_evaluate(frame, strict_temporal=True)
+    _, metrics, _, _ = _fit_and_evaluate(frame, strict_temporal=True)
 
     assert metrics["temporal_mode"] == "strict"
     for feature in CURRENT_STATE_RESTAURANT_FEATURES:
