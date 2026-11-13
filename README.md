@@ -13,6 +13,7 @@ Projeto de portfólio desenvolvido para a vaga de **Estágio/Residência em AI E
 - [Endpoints da API](#-endpoints-da-api)
 - [Telas implementadas](#-telas-implementadas)
 - [Arquitetura de IA](#-arquitetura-de-ia)
+- [Simulação e cardápios sintéticos](#-simulação-e-cardápios-sintéticos)
 - [Roadmap](#-roadmap)
 - [Autor](#-autor)
 - [Licença](#-licença)
@@ -29,9 +30,11 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 |---------|-----------|
 | 📍 **Busca geoespacial** | Restaurantes próximos calculados com PostGIS (`ST_DWithin` + índice GIST) |
 | 🗺️ **Descoberta no OpenStreetMap** | Restaurantes reais próximos via Overpass API, com cache Redis e mapa Leaflet (sem chave); o detalhe persiste o estabelecimento e abre a mesma tela do catálogo |
+| 🍽️ **Cardápio por restaurante** | `menu_items` via `GET /api/v1/restaurants/{id}/menu`; itens gerados por script têm `source=synthetic` e aparecem marcados como “Exemplo” na UI |
 | 🧠 **Histórico no recomendador** | `VIEW`, `CLICK`, `FAVORITE` e `PURCHASE` alimentam features e afinidade sem retreinar o modelo |
 | ✨ **Recomendação personalizada** | LightGBM com features por turno (manhã/tarde/noite/madrugada); re-ranking LoRA opcional |
 | 🎯 **A/B Test** | Experimento controlado: feed personalizado vs. feed por distância |
+| 🧪 **Simulação de usuários** | Agentes sintéticos com personas geram backfill/live, comparam grupos contra o oráculo e separam qualidade de ordenação de cobertura de seleção |
 | 📱 **Feed personalizado no mobile** | Home consome `GET /recommendations` com fallback para catálogo/mock |
 | 📊 **Monitoramento de drift** | PSI (Population Stability Index) por feature com alertas automáticos |
 | 🔄 **Batch scoring** | Scores pré-calculados por usuário/turno gravados no Redis |
@@ -47,6 +50,7 @@ O FoodFlow é uma plataforma completa de delivery que combina busca geoespacial,
 | Re-ranking LoRA | Experimental e opcional (`ENABLE_LORA_RERANKER=true`); avaliação offline mostra que não supera o LightGBM no seed |
 | Mobile | Catálogo, detalhe, perfil e feed de recomendações via API; mock como fallback offline |
 | Persistência de modelos | Volume `backend_models` em produção; fallback quando ausente |
+| Simulação e cardápios sintéticos | Scripts idempotentes (`enrich_restaurants.py`, `generate_synthetic_restaurants.py`, `simulate.py`) com `--dry-run`, `--yes`, bloqueio de produção e banco separado recomendado |
 | Docker Compose | Script de validação end-to-end e workflow de CI adicionados; execução local pendente por ausência de Docker neste ambiente |
 
 ---
@@ -106,7 +110,9 @@ foodflow/
 ├── .github/workflows/
 │   └── compose-validation.yml      # validação do Compose em runner com Docker
 ├── docs/
-│   └── arquitetura-tecnica.md      # documentação técnica completa
+│   ├── arquitetura-tecnica.md      # documentação técnica completa
+│   ├── especificacao-metricas-v2.md
+│   └── simulacao.md                # cardápios sintéticos, agentes e métricas
 ├── backend/
 │   ├── README.md
 │   ├── Dockerfile                  # desenvolvimento
@@ -117,16 +123,21 @@ foodflow/
 │   ├── alembic/                    # migrações versionadas
 │   ├── app/
 │   │   ├── main.py                 # FastAPI + lifespan + middleware
-│   │   ├── models.py               # Restaurant, User, Order, Review, Event
+│   │   ├── models.py               # Restaurant, MenuItem, User, Order, Review, Interaction…
 │   │   ├── schemas.py
-│   │   ├── crud.py                 # busca geoespacial, reviews, eventos
+│   │   ├── crud.py                 # busca geoespacial, cardápio, reviews, eventos
 │   │   ├── seeds.py / seed_data.py # seed idempotente
 │   │   ├── api/                    # restaurants, reviews, recommendations, events, drift, experiment
 │   │   ├── cache/redis_client.py   # scores + Redis Stream + métricas A/B
 │   │   ├── core/                   # config + constantes
+│   │   ├── simulation/             # personas, funil, cardápios e guardas de escrita
 │   │   └── ml/                     # features, recommender, train, lora_training, lora_evaluation, reranker
 │   ├── scripts/
 │   │   ├── init_db.py              # migrações + seed
+│   │   ├── ingest_osm.py           # ingestão por bbox (Overpass)
+│   │   ├── enrich_restaurants.py   # cardápio sintético + frete/prazo
+│   │   ├── generate_synthetic_restaurants.py  # catálogo sintético (plano B ao OSM)
+│   │   ├── simulate.py             # backfill, live, report e cleanup
 │   │   ├── batch_score.py          # batch scoring por usuário/turno
 │   │   ├── drift_detect.py         # detecção de drift (PSI)
 │   │   ├── train_lora.py           # CLI de fine-tuning LoRA (lógica em app/ml/lora_training.py)
@@ -165,6 +176,12 @@ docker compose up -d
 ```
 
 Isso sobe **PostgreSQL/PostGIS**, **Redis** e a **API FastAPI**. As migrações e o seed são aplicados por um serviço `migrate` pontual antes de a API iniciar.
+
+Para cardápio sintético no ambiente Docker (necessário para testar o fluxo de pedido):
+
+```bash
+docker compose run --rm backend python scripts/enrich_restaurants.py --yes
+```
 
 A API estará disponível em `http://localhost:8000` e o Swagger em `http://localhost:8000/docs`.
 
@@ -218,6 +235,9 @@ cp .env.example .env            # Linux/Mac
 # Inicializar banco (migrações + seed)
 python scripts/init_db.py
 
+# Opcional: cardápio sintético para testar o fluxo de pedido
+python scripts/enrich_restaurants.py --yes
+
 # Subir a API
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -268,6 +288,7 @@ para que o artefato sobreviva à recriação do container.
 | `GET` | `/api/v1/restaurants/nearby` | Restaurantes reais próximos via OpenStreetMap/Overpass (`lat`, `lon`, `radius`, `category`); sem cardápio/entrega |
 | `GET` | `/api/v1/restaurants/osm/{osm_type}/{osm_id}` | Detalhe do OSM (persiste no primeiro acesso; `refresh=true` reconsulta a Overpass) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante com avaliações |
+| `GET` | `/api/v1/restaurants/{id}/menu` | Cardápio do restaurante (itens com `source=synthetic` são exemplos gerados por script) |
 
 ### Recomendações
 
@@ -427,6 +448,66 @@ O LoRA não superou o LightGBM em nenhuma das janelas testadas (7, 10 e 14 dias)
 
 ---
 
+## 🧪 Simulação e cardápios sintéticos
+
+O OSM e o Street View não fornecem cardápio. Para destravar o fluxo de pedido e
+testar o recomendador sem APIs pagas, o projeto inclui cardápios sintéticos e um
+simulador de usuários com personas. **Tudo é sintético** e serve para validar
+pipeline, A/B e regressões — não é evidência de desempenho com pessoas reais.
+
+```bash
+cd backend
+python scripts/init_db.py                          # aplica até a migração 0006
+
+# Restaurantes reais (OSM) e/ou sintéticos como plano B
+python scripts/ingest_osm.py --south -23.55 --west -46.82 --north -23.51 --east -46.77
+python scripts/generate_synthetic_restaurants.py --count 150 --dry-run
+python scripts/generate_synthetic_restaurants.py --count 150 --yes
+
+# Cardápio sintético e preenchimento de frete/prazo neutros
+python scripts/enrich_restaurants.py --fill-delivery --dry-run
+python scripts/enrich_restaurants.py --fill-delivery --yes
+
+# Histórico retroativo, treino e agentes usando a API real
+python scripts/simulate.py backfill --users 300 --days 21 --run-id exp1 --yes
+python -m app.ml.train --source db
+python scripts/simulate.py live --run-id exp1 --rounds 5 --yes
+python scripts/simulate.py live --run-id exp1-unseen --unseen-users --rounds 5 --yes
+
+# Relatório e limpeza auditável
+python scripts/simulate.py report --run-id exp1 --by-cohort --by-persona
+python scripts/simulate.py cleanup --run-id exp1 --dry-run
+python scripts/simulate.py cleanup --run-id exp1 --include-restaurants --yes
+```
+
+**Segurança:** os comandos que escrevem exibem o banco de destino, exigem
+`--yes`, aceitam `--dry-run` sem gravar, bloqueiam produção (`FOODFLOW_ENV` ou
+nome do banco com `prod`) e exigem `--allow-remote-db` para hosts remotos. Rode
+sempre em um banco separado (`DATABASE_URL=.../foodflow_sim`): o treino lê todas
+as linhas e dados simulados contaminariam um treino com usuários reais.
+
+**Métricas:** o relatório separa duas perguntas:
+
+- `ordenacao servida` (NDCG@10): a API ordenou bem os restaurantes que mostrou?
+- `recall do top-10 ideal` e `cobertura do oraculo`: a seleção contra **todos**
+  os candidatos elegíveis foi boa? A cobertura compara compras esperadas da
+  lista servida com as do top-10 ideal (1.0 = perfeito).
+
+No modo `live`, o universo elegível é calculado **antes** de chamar a API; usar a
+própria resposta como universo mediria apenas a ordenação. Os ICs usam bootstrap
+de **usuários** (não de sessões), e o relatório aceita `--by-persona`,
+`--by-cohort` e `--by-period day|week|month`.
+
+**Coortes e idempotência:** `--unseen-users` cria uma coorte sem histórico no
+treino; `--require-unseen` falha se ela não existir. Restaurantes sintéticos têm
+UUID determinístico, o backfill bloqueia um `run_id` já usado, e pedidos,
+avaliações e restaurantes guardam `simulation_run_id`/`simulation_mode` para
+auditoria. O `cleanup` grava um JSON com banco, filtros e contagens.
+
+Detalhes completos em [`docs/simulacao.md`](docs/simulacao.md).
+
+---
+
 ## 🗺️ Roadmap
 
 ### ✅ Concluído
@@ -448,6 +529,9 @@ O LoRA não superou o LightGBM em nenhuma das janelas testadas (7, 10 e 14 dias)
 - [x] Experimento A/B de recomendações
 - [x] Descoberta no OpenStreetMap com detalhe persistido e mesma tela do catálogo
 - [x] Histórico de interações (visualização, clique, favorito e compra) no recomendador
+- [x] Cardápios sintéticos (`menu_items`) com endpoint de cardápio e aviso de item de exemplo
+- [x] Simulador de usuários com backfill/live, coortes `known`/`unseen`, métricas de ordenação vs. seleção e cleanup auditável
+- [x] Guardas de escrita nos scripts (`--dry-run`, `--yes`, bloqueio de produção e host remoto)
 - [x] Script e workflow de validação do Docker Compose
 
 ### 🔄 Em andamento / Próximos passos

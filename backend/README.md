@@ -30,6 +30,7 @@ API REST em **FastAPI** com **PostgreSQL 16 + PostGIS**, **Redis** e recomendaç
 | `GET` | `/api/v1/restaurants/nearby?lat=&lon=&radius=&category=` | Descoberta no OpenStreetMap/Overpass; `radius` em metros e `category` opcional |
 | `GET` | `/api/v1/restaurants/osm/{osm_type}/{osm_id}?refresh=` | Detalhe do OSM (persiste no primeiro acesso e devolve o UUID interno) |
 | `GET` | `/api/v1/restaurants/{id}` | Detalhe do restaurante + últimas 10 avaliações |
+| `GET` | `/api/v1/restaurants/{id}/menu` | Cardápio do restaurante (lista vazia se não houver itens); `source=synthetic` indica exemplo gerado por script |
 | `POST` | `/api/v1/interactions` | Registra `IMPRESSION`, `VIEW`, `VIEW_DETAILS`, `CLICK`, `FAVORITE`, `PURCHASE` ou `DISMISS` (idempotência opcional) |
 | `GET` | `/api/v1/users/{id}/preferences` | Perfil de preferências derivado do histórico |
 | `POST` | `/api/v1/reviews` | Cria avaliação com idempotência via `Idempotency-Key` |
@@ -183,6 +184,93 @@ agregado é exposto em `GET /api/v1/users/{id}/preferences`. Criar uma interaç�
 invalida o cache de scores daquele usuário, então a próxima consulta já reflete
 o novo histórico.
 
+## Cardápios sintéticos e simulação de usuários
+
+Nenhuma fonte aberta (OSM, Street View) publica cardápio. Para destravar o fluxo
+de pedido e testar o recomendador sem APIs pagas, o backend inclui cardápios
+sintéticos e um simulador de usuários. Tudo é **sintético**: os números medem o
+modelo contra as regras do simulador, não contra pessoas reais.
+
+### Cardápio e catálogo sintéticos
+
+- `scripts/enrich_restaurants.py` cria itens plausíveis e determinísticos por
+  restaurante, com `source='synthetic'`. O frontend os marca como “Exemplo”.
+  `--fill-delivery` substitui apenas os valores neutros do OSM (frete `0` e
+  prazo `20–30`). Reexecutar é idempotente: restaurantes que já têm cardápio são
+  ignorados.
+- `scripts/generate_synthetic_restaurants.py` gera um catálogo sintético (plano B
+  ao OSM) com UUID determinístico por `(seed, centro, raio, índice)`; repetir o
+  comando não duplica restaurantes. Cada registro guarda `simulation_run_id`.
+
+### `scripts/simulate.py`
+
+| Subcomando | O que faz |
+|---|---|
+| `backfill` | Gera histórico retroativo direto no banco com políticas `distance`, `popularity`, `random` ou `mixed`; eventos ficam com `experiment_mode='demo'` e fora das métricas oficiais. Bloqueia um `run_id` que já tenha eventos. |
+| `live` | Agentes chamam `GET /recommendations` e `POST /interactions` de verdade, exercitando o A/B. Grava `sim_runs/<run-id>/live_sessions.jsonl`. |
+| `report` | Compara grupos contra o oráculo, com `--by-persona`, `--by-cohort`, `--by-period` e `--require-unseen`. |
+| `cleanup` | Remove usuários simulados e o que eles geraram; `--dry-run` só conta, `--include-restaurants` remove restaurantes sintéticos sem referências e todo run grava um JSON de auditoria. |
+
+```bash
+cd backend
+python scripts/init_db.py                          # aplica até a migração 0006
+
+python scripts/generate_synthetic_restaurants.py --count 150 --dry-run
+python scripts/generate_synthetic_restaurants.py --count 150 --yes
+python scripts/enrich_restaurants.py --fill-delivery --dry-run
+python scripts/enrich_restaurants.py --fill-delivery --yes
+
+python scripts/simulate.py backfill --users 300 --days 21 --run-id exp1 --yes
+python -m app.ml.train --source db
+python scripts/simulate.py live --run-id exp1 --rounds 5 --yes
+python scripts/simulate.py live --run-id exp1-unseen --unseen-users --rounds 5 --yes
+python scripts/simulate.py report --run-id exp1 --by-cohort --by-persona
+python scripts/simulate.py cleanup --run-id exp1 --dry-run
+```
+
+### Segurança operacional
+
+Os comandos que escrevem seguem o mesmo contrato:
+
+- exibem o banco de destino antes de qualquer operação;
+- `--dry-run` mostra o que mudaria e **não grava** (não exige `--yes`);
+- sem `--yes` o script aborta;
+- bancos de produção (ambiente `production`/`prod` ou nome com `prod`) são
+  bloqueados;
+- hosts remotos exigem `--allow-remote-db`.
+
+Rode em um banco separado (`DATABASE_URL=.../foodflow_sim`): o treino lê todas
+as linhas e dados simulados contaminariam um treino com usuários reais. Os logs
+de sessão ficam em `backend/sim_runs/` (gitignored).
+
+### Ordenação vs. seleção
+
+- `ranking_quality_served` (NDCG@10): a API ordenou bem os restaurantes que
+  mostrou? O ideal é calculado dentro da própria lista servida.
+- `candidate_recall`: dos 10 melhores do universo elegível, quantos entraram na
+  lista servida?
+- `selection_coverage`: compras esperadas da lista servida ÷ compras esperadas
+  do top-10 ideal, considerando **todos** os candidatos elegíveis (com viés de
+  posição). `1.0` = seleção e ordenação perfeitas.
+
+No modo `live`, o universo elegível (`nearby_candidates`, até 50 restaurantes em
+10 km) é calculado **antes** de chamar a API. Usar a própria resposta como
+universo mediria apenas a ordenação. Os ICs usam bootstrap de **usuários**, não
+de sessões.
+
+### Coortes e idempotência
+
+- `--unseen-users` cria uma coorte `unseen` (offset de índice e `user_seed`
+  separado), sem histórico no treino; `--require-unseen` falha se ela não
+  existir.
+- Pedidos, avaliações e restaurantes sintéticos guardam
+  `simulation_run_id`/`simulation_mode`; interações guardam
+  `metadata.sim_run`/`metadata.sim_mode`.
+- Restrições alimentares não têm fallback: se nenhum item do cardápio atende à
+  restrição do agente, a compra não acontece naquele restaurante.
+
+Detalhes completos em [`docs/simulacao.md`](../docs/simulacao.md).
+
 ## Batch scoring
 
 O job `scripts/batch_score.py` calcula os scores de todos os usuários para os quatro turnos e grava em `reco:scores:{user_id}:{turno}` com TTL de 24h. A API continua funcionando sem o job (cache miss → modelo/popularidade), mas o batch evita latência de inferência na primeira requisição após a invalidação.
@@ -317,7 +405,14 @@ python -m alembic upgrade head --sql    # revisa o SQL sem conectar
 python -m alembic revision --autogenerate -m "descricao"  # após mudar models.py
 ```
 
-A migração inicial (`0001`) cria a extensão PostGIS. A revisão `0002` adiciona os campos OSM em `restaurants` (`source`, `osm_type`, `osm_id`, `latitude`, `longitude`, `cuisine`, `website`, `opening_hours`, `osm_url`), a constraint única `(osm_type, osm_id)` e a tabela `user_restaurant_interactions` com índices por usuário/data. Se a role do banco não for superusuária, crie a extensão antes como `postgres`:
+A migração inicial (`0001`) cria a extensão PostGIS. A revisão `0002` adiciona os campos OSM em `restaurants` (`source`, `osm_type`, `osm_id`, `latitude`, `longitude`, `cuisine`, `website`, `opening_hours`, `osm_url`), a constraint única `(osm_type, osm_id)` e a tabela `user_restaurant_interactions` com índices por usuário/data. As revisões seguintes:
+
+- `0003`: contexto experimental nas interações (`experiment_group`, `experiment_mode`, `experiment_version`, `recommendation_id`, posição, versão do modelo) e `last_synced_at`.
+- `0004`: tabela `experiment_assignments` (atribuição persistente por usuário/versão).
+- `0005`: tabela `menu_items` (cardápio por restaurante; `source='synthetic'` para itens de exemplo).
+- `0006`: `simulation_run_id`/`simulation_mode` em restaurantes, pedidos e avaliações, além da tabela `recommendation_logs`.
+
+Se a role do banco não for superusuária, crie a extensão antes como `postgres`:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -357,7 +452,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic (revisões `0001` a `0004`), métricas de ranking (P@K, R@K, NDCG, MAP, cobertura, ILD, novidade), split temporal por contexto, alvo `purchased`, pesos de negativos observados/não observados, métricas preditivas (ROC AUC, PR AUC, Brier, Log Loss) com disponibilidade independente, calibração (ECE), sensibilidade a negativos observados/não observados, política temporal e modo `--strict-temporal`, rolling-window, IC bootstrap por usuário, comparação com produção, promoção/rollback, readiness, round-trip do modelo, query PostGIS, persistência/detalhe de restaurantes OSM, ingestão por bbox, Street View (metadata/proxy e erros), interações e perfil de preferências, atribuição e métricas do experimento A/B (fases, coorte válida, exigência de baseline, bootstrap nulo sob H0, fallback z, Bonferroni, plano de amostra, contaminação e modo demo), validação de schemas e contratos da API (sem depender de banco).
+Os testes cobrem feature engineering, contexto de turno, geração do dataset de treino, batch scoring, migrações Alembic (revisões `0001` a `0006`), métricas de ranking (P@K, R@K, NDCG, MAP, cobertura, ILD, novidade), split temporal por contexto, alvo `purchased`, pesos de negativos observados/não observados, métricas preditivas (ROC AUC, PR AUC, Brier, Log Loss) com disponibilidade independente, calibração (ECE), sensibilidade a negativos observados/não observados, política temporal e modo `--strict-temporal`, rolling-window, IC bootstrap por usuário, comparação com produção, promoção/rollback, readiness, round-trip do modelo, query PostGIS, persistência/detalhe de restaurantes OSM, ingestão por bbox, Street View (metadata/proxy e erros), interações e perfil de preferências, atribuição e métricas do experimento A/B (fases, coorte válida, exigência de baseline, bootstrap nulo sob H0, fallback z, Bonferroni, plano de amostra, contaminação e modo demo), simulação (dieta sem fallback, métricas de ordenação vs. seleção, guardas de escrita, UUID determinístico de restaurantes sintéticos e relatório por coorte/período), validação de schemas e contratos da API (sem depender de banco).
 
 ## Estrutura
 
@@ -396,14 +491,25 @@ backend/
 │   ├── core/
 │   │   ├── config.py
 │   │   └── constants.py
+│   ├── simulation/
+│   │   ├── personas.py          # personas, turnos e amostragem de usuários
+│   │   ├── behavior.py          # utilidade latente, funil e métricas
+│   │   ├── menu_catalog.py      # cardápios sintéticos por arquétipo
+│   │   ├── world.py             # catálogo do banco + usuários simulados
+│   │   └── safety.py            # guardas de escrita (--yes, produção, host remoto)
 │   └── ml/
 │       ├── features.py          # features compartilhadas treino/serving
 │       ├── recommender.py       # load/save + predict + fallback
 │       ├── batch.py             # scoring em lote por usuário/turno
 │       └── train.py             # dataset, treino e métricas
 ├── models/                      # artefatos .joblib (gitignored)
+├── sim_runs/                    # logs de simulação (gitignored)
 ├── scripts/
 │   ├── init_db.py               # migrações Alembic + seed
+│   ├── ingest_osm.py            # ingestão por bbox via Overpass
+│   ├── enrich_restaurants.py    # cardápio sintético + frete/prazo
+│   ├── generate_synthetic_restaurants.py  # catálogo sintético
+│   ├── simulate.py              # backfill, live, report e cleanup
 │   └── batch_score.py           # CLI do batch scoring (cron/Task Scheduler)
 └── tests/
 ```
